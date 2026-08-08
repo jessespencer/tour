@@ -1,8 +1,8 @@
 # Tour Map
 
 Interactive touring-history map. Vite + React + TS, D3 for geo/zoom only —
-rendering is React-owned SVG. See `tour-map-claude-code-prompt.md` spec
-(user-provided) for the full product brief; data conventions in README.
+rendering is React-owned SVG. The full product brief lives outside the repo
+(user-provided spec document); data conventions are in the README.
 
 ## Non-obvious constraints
 

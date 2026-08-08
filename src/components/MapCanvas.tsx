@@ -5,13 +5,19 @@ import { zoom, zoomIdentity, type ZoomTransform } from 'd3-zoom';
 import { merge, mesh } from 'topojson-client';
 import type { Topology, GeometryCollection, Polygon, MultiPolygon } from 'topojson-specification';
 import statesTopo from 'us-atlas/states-albers-10m.json';
-import { legRoutes, venueDots, type VenueDot } from '../lib/derive';
+import { legRoutes, venueDots, type RouteSegment, type VenueDot } from '../lib/derive';
 import { formatDate } from '../lib/format';
 
 const topo = statesTopo as unknown as Topology<{ states: GeometryCollection; nation: GeometryCollection }>;
 
 // Lower 48 only — Alaska, Hawaii, Puerto Rico dropped from the basemap.
 const EXCLUDED_FIPS = new Set(['02', '15', '72']);
+
+function segmentProgress(seg: RouteSegment, day: number): number {
+  if (day >= seg.toDay) return 1;
+  if (day <= seg.fromDay || seg.toDay === seg.fromDay) return 0;
+  return (day - seg.fromDay) / (seg.toDay - seg.fromDay);
+}
 
 interface Hover {
   dot: VenueDot;
@@ -21,9 +27,11 @@ interface Hover {
 
 interface MapCanvasProps {
   activeLegIds: Set<string>;
+  timeDays: number;
+  onSelectVenue: (venueId: string) => void;
 }
 
-export function MapCanvas({ activeLegIds }: MapCanvasProps) {
+export function MapCanvas({ activeLegIds, timeDays, onSelectVenue }: MapCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [t, setT] = useState<ZoomTransform>(zoomIdentity);
   const [hover, setHover] = useState<Hover | null>(null);
@@ -77,7 +85,7 @@ export function MapCanvas({ activeLegIds }: MapCanvasProps) {
           <path d={nationPath} className="map-nation" strokeWidth={1.1 / k} />
           <path d={statesPath} className="map-states" strokeWidth={0.6 / k} />
 
-          {legRoutes.map(({ leg, paths }) => (
+          {legRoutes.map(({ leg, segments }) => (
             <g
               key={leg.id}
               className={activeLegIds.has(leg.id) ? 'leg-route' : 'leg-route leg-route--off'}
@@ -85,23 +93,46 @@ export function MapCanvas({ activeLegIds }: MapCanvasProps) {
               strokeWidth={1.8 / k}
               style={{ filter: `drop-shadow(0 0 ${3 / k}px ${leg.color}66)` }}
             >
-              {paths.map((d, i) => (
-                <path key={i} d={d} />
-              ))}
+              {segments.map((seg, i) => {
+                if (!seg.path) return null;
+                const progress = segmentProgress(seg, timeDays);
+                if (progress <= 0) return null;
+                return (
+                  <path
+                    key={i}
+                    d={seg.path}
+                    pathLength={1}
+                    strokeDasharray="1"
+                    strokeDashoffset={1 - progress}
+                  />
+                );
+              })}
             </g>
           ))}
 
           {venueDots.map((dot) => {
-            const { venue, point, color, shows } = dot;
+            const { venue, point, color, shows, firstDay } = dot;
+            if (firstDay > timeDays) return null; // not reached yet on the timeline
             const active = shows.some((s) => activeLegIds.has(s.legId));
             const unknown = venue.name === '';
             return (
               <g
                 key={venue.id}
                 className={active ? 'dot' : 'dot dot--off'}
+                role="button"
+                tabIndex={active ? 0 : -1}
+                aria-label={`${venue.name || 'Venue TBD'}, ${venue.city}, ${venue.state}`}
+                onClick={() => onSelectVenue(venue.id)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectVenue(venue.id);
+                  }
+                }}
                 onMouseEnter={(e) => setHover({ dot, x: e.clientX, y: e.clientY })}
                 onMouseMove={(e) => setHover({ dot, x: e.clientX, y: e.clientY })}
                 onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(null)}
               >
                 {!unknown && <circle cx={point[0]} cy={point[1]} r={dotR * 2} fill={color} className="dot-halo" />}
                 <circle
