@@ -17,11 +17,12 @@ const TYPE_LABELS: Record<Show['type'], string> = {
 
 interface DetailPanelProps {
   venueId: string;
+  selectedShowId: string | null;
   onClose: () => void;
-  onSelectVenue: (venueId: string) => void;
+  onSelectShow: (showId: string) => void;
 }
 
-export function DetailPanel({ venueId, onClose, onSelectVenue }: DetailPanelProps) {
+export function DetailPanel({ venueId, selectedShowId, onClose, onSelectShow }: DetailPanelProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -127,12 +128,12 @@ export function DetailPanel({ venueId, onClose, onSelectVenue }: DetailPanelProp
             {route.shows.map((s) => {
               const v = venueById.get(s.venueId);
               if (!v) return null;
-              const current = v.id === venueId;
+              const current = selectedShowId ? s.id === selectedShowId : v.id === venueId;
               return (
                 <li key={s.id} className={current ? 'run-row run-row--current' : 'run-row'}>
                   <button
                     type="button"
-                    onClick={() => onSelectVenue(v.id)}
+                    onClick={() => onSelectShow(s.id)}
                     aria-current={current ? 'true' : undefined}
                     style={current ? { borderLeftColor: route.leg.color } : undefined}
                   >

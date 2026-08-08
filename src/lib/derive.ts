@@ -7,6 +7,7 @@ import { dayOf } from './time';
 
 export const venueById = new Map<string, Venue>(venues.map((v) => [v.id, v]));
 export const legById = new Map<string, Leg>(legs.map((l) => [l.id, l]));
+export const showById = new Map<string, Show>(shows.map((s) => [s.id, s]));
 
 export interface RouteSegment {
   path: string | null;  // null when the hop is too short to draw (same venue)

@@ -1,25 +1,28 @@
+import type { CSSProperties } from 'react';
 import { legs } from '../data/legs';
 import { legRoutes } from '../lib/derive';
 import { formatRange } from '../lib/format';
 
 interface LegRailProps {
-  activeLegIds: Set<string>;
+  selectedLegIds: Set<string>;  // empty = no focus, everything lit
   onToggle: (legId: string) => void;
 }
 
-export function LegRail({ activeLegIds, onToggle }: LegRailProps) {
+export function LegRail({ selectedLegIds, onToggle }: LegRailProps) {
+  const focused = selectedLegIds.size > 0;
   return (
-    <nav className="leg-rail" aria-label="Tour legs">
+    <nav className={focused ? 'leg-rail leg-rail--focused' : 'leg-rail'} aria-label="Tour legs">
       {legs.map((leg) => {
         const route = legRoutes.find((r) => r.leg.id === leg.id);
         const count = route?.shows.length ?? 0;
-        const active = activeLegIds.has(leg.id);
+        const selected = selectedLegIds.has(leg.id);
         return (
           <button
             key={leg.id}
             type="button"
-            className={active ? 'leg-item' : 'leg-item leg-item--off'}
-            aria-pressed={active}
+            className={selected ? 'leg-item leg-item--selected' : 'leg-item'}
+            style={{ '--leg-color': leg.color } as CSSProperties}
+            aria-pressed={selected}
             onClick={() => onToggle(leg.id)}
           >
             <span className="leg-swatch" style={{ background: leg.color }} aria-hidden="true" />

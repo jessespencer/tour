@@ -4,11 +4,14 @@ import { LegRail } from './components/LegRail';
 import { ListView } from './components/ListView';
 import { MapCanvas, type FlyRequest } from './components/MapCanvas';
 import { Scrubber } from './components/Scrubber';
+import { ShowStepper } from './components/ShowStepper';
 import { legs } from './data/legs';
-import { milesAt, showsPlayedAt } from './lib/derive';
+import { milesAt, showById, showsPlayedAt, venueDots } from './lib/derive';
 import { TOTAL_DAYS } from './lib/time';
 
 const PLAY_SPEED = 36.5; // timeline days per second ≈ 10s per year
+
+const ALL_LEG_IDS = new Set(legs.map((l) => l.id));
 
 const reducedMotion =
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -35,14 +38,17 @@ function useOdometer(target: number): number {
 }
 
 export function App() {
-  const [activeLegIds, setActiveLegIds] = useState<Set<string>>(
-    () => new Set(legs.map((l) => l.id)),
-  );
+  // Highlight semantics: empty selection = no focus, every leg fully lit.
+  const [selectedLegIds, setSelectedLegIds] = useState<Set<string>>(() => new Set());
   const [timeDays, setTimeDays] = useState(TOTAL_DAYS);
   const [playing, setPlaying] = useState(false);
-  const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
+  const [selectedShowId, setSelectedShowId] = useState<string | null>(null);
   const [view, setView] = useState<'map' | 'list'>('map');
   const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
+
+  const activeLegIds = selectedLegIds.size === 0 ? ALL_LEG_IDS : selectedLegIds;
+  const selectedShow = selectedShowId ? showById.get(selectedShowId) : undefined;
+  const selectedVenueId = selectedShow?.venueId ?? null;
 
   useEffect(() => {
     if (!playing) return;
@@ -65,7 +71,7 @@ export function App() {
 
   const toggleLeg = (legId: string) => {
     setPlaying(false);
-    setActiveLegIds((prev) => {
+    setSelectedLegIds((prev) => {
       const next = new Set(prev);
       if (next.has(legId)) next.delete(legId);
       else next.add(legId);
@@ -83,16 +89,21 @@ export function App() {
     setPlaying((p) => !p);
   };
 
+  // Dot clicks: open the panel on the venue's first show, no camera move.
   const handleSelectVenue = (venueId: string) => {
     setPlaying(false);
-    setSelectedVenueId(venueId);
+    const dot = venueDots.find((d) => d.venue.id === venueId);
+    if (dot) setSelectedShowId(dot.shows[0].id);
   };
 
-  // Run-list and list-view clicks also navigate: switch to the map and fly there.
-  const handleNavigateToVenue = (venueId: string) => {
-    handleSelectVenue(venueId);
+  // Stepper, run-list, and list-view clicks: select and fly there.
+  const handleNavigateToShow = (showId: string) => {
+    const show = showById.get(showId);
+    if (!show) return;
+    setPlaying(false);
+    setSelectedShowId(showId);
     setView('map');
-    setFlyRequest((prev) => ({ venueId, seq: (prev?.seq ?? 0) + 1 }));
+    setFlyRequest((prev) => ({ venueId: show.venueId, seq: (prev?.seq ?? 0) + 1 }));
   };
 
   const odometerMiles = useOdometer(milesAt(timeDays));
@@ -104,6 +115,11 @@ export function App() {
           <h1 className="header-title">Every Show</h1>
           <p className="header-sub">Drums for Matt Hires · 2013–2014</p>
         </div>
+        <ShowStepper
+          selectedShowId={selectedShowId}
+          activeLegIds={activeLegIds}
+          onStep={handleNavigateToShow}
+        />
         <div className="header-stats">
           <button
             type="button"
@@ -124,24 +140,26 @@ export function App() {
         </div>
       </header>
 
-      <LegRail activeLegIds={activeLegIds} onToggle={toggleLeg} />
+      <LegRail selectedLegIds={selectedLegIds} onToggle={toggleLeg} />
 
       <main className={view === 'list' ? 'stage stage--list' : 'stage'}>
         {view === 'map' ? (
           <MapCanvas
             activeLegIds={activeLegIds}
             timeDays={timeDays}
+            selectedVenueId={selectedVenueId}
             onSelectVenue={handleSelectVenue}
             flyTo={flyRequest}
           />
         ) : (
-          <ListView activeLegIds={activeLegIds} onSelectVenue={handleNavigateToVenue} />
+          <ListView activeLegIds={activeLegIds} onSelectShow={handleNavigateToShow} />
         )}
         {selectedVenueId && (
           <DetailPanel
             venueId={selectedVenueId}
-            onClose={() => setSelectedVenueId(null)}
-            onSelectVenue={handleNavigateToVenue}
+            selectedShowId={selectedShowId}
+            onClose={() => setSelectedShowId(null)}
+            onSelectShow={handleNavigateToShow}
           />
         )}
       </main>

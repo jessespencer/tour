@@ -161,8 +161,17 @@ body {
   outline-offset: -1.5px;
 }
 
-.leg-item--off {
-  opacity: 0.32;
+.leg-item {
+  border-left: 2px solid transparent;
+}
+
+.leg-item--selected {
+  border-left-color: var(--leg-color);
+  background: rgba(233, 234, 228, 0.07);
+}
+
+.leg-rail--focused .leg-item:not(.leg-item--selected) {
+  opacity: 0.35;
 }
 
 .leg-swatch {
@@ -288,6 +297,129 @@ body {
 .dot:focus-visible .dot-core {
   stroke: var(--paper);
   stroke-width: 1.6;
+}
+
+.dot-select-ring {
+  fill: none;
+  stroke: var(--paper);
+  opacity: 0.85;
+  pointer-events: none;
+  animation: ring-pulse 2s ease-in-out infinite;
+}
+
+@keyframes ring-pulse {
+  0%,
+  100% {
+    opacity: 0.85;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.map-reset {
+  position: absolute;
+  top: 0.8rem;
+  left: 0.8rem;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: rgba(12, 14, 12, 0.85);
+  color: var(--paper);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.map-reset:hover {
+  border-color: var(--muted);
+}
+
+.map-reset:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: 2px;
+}
+
+.map-reset svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── show stepper ───────────────────────────────────────────────────────── */
+
+.stepper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.7rem;
+  flex: 1;
+  min-width: 0;
+  align-self: center;
+}
+
+.stepper-btn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--paper);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.stepper-btn:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+.stepper-btn:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: 2px;
+}
+
+.stepper-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.stepper-btn svg {
+  width: 8px;
+  height: 12px;
+}
+
+.stepper-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+  max-width: 340px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.stepper-venue {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+}
+
+.stepper-date {
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+  color: var(--muted);
 }
 
 /* ── scrubber ───────────────────────────────────────────────────────────── */
@@ -784,6 +916,22 @@ body {
     border-radius: 999px;
   }
 
+  .leg-item--selected {
+    border-color: var(--leg-color);
+    background: rgba(233, 234, 228, 0.07);
+  }
+
+  .stepper {
+    order: 3;
+    flex-basis: 100%;
+    justify-content: space-between;
+    margin-top: 0.6rem;
+  }
+
+  .header {
+    flex-wrap: wrap;
+  }
+
   .leg-swatch {
     margin-top: 0;
     width: 10px;
@@ -855,6 +1003,10 @@ body {
   .dot,
   .leg-item {
     transition: none;
+  }
+
+  .dot-select-ring {
+    animation: none;
   }
 
   .detail {

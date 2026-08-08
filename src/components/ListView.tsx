@@ -7,10 +7,10 @@ const allShows = sortShows(shows);
 
 interface ListViewProps {
   activeLegIds: Set<string>;
-  onSelectVenue: (venueId: string) => void;
+  onSelectShow: (showId: string) => void;
 }
 
-export function ListView({ activeLegIds, onSelectVenue }: ListViewProps) {
+export function ListView({ activeLegIds, onSelectShow }: ListViewProps) {
   return (
     <ol className="list-view" aria-label="All shows, chronological">
       {allShows.map((show) => {
@@ -20,7 +20,7 @@ export function ListView({ activeLegIds, onSelectVenue }: ListViewProps) {
         const active = activeLegIds.has(show.legId);
         return (
           <li key={show.id} className={active ? 'list-row' : 'list-row list-row--dim'}>
-            <button type="button" onClick={() => onSelectVenue(venue.id)}>
+            <button type="button" onClick={() => onSelectShow(show.id)}>
               <span className="run-date">{formatDate(show.date)}</span>
               <span className="list-swatch" style={{ background: leg.color }} aria-hidden="true" />
               <span className="run-venue">

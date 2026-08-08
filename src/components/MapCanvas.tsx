@@ -34,11 +34,18 @@ export interface FlyRequest {
 interface MapCanvasProps {
   activeLegIds: Set<string>;
   timeDays: number;
+  selectedVenueId: string | null;
   onSelectVenue: (venueId: string) => void;
   flyTo: FlyRequest | null;
 }
 
-export function MapCanvas({ activeLegIds, timeDays, onSelectVenue, flyTo }: MapCanvasProps) {
+export function MapCanvas({
+  activeLegIds,
+  timeDays,
+  selectedVenueId,
+  onSelectVenue,
+  flyTo,
+}: MapCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const behaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [t, setT] = useState<ZoomTransform>(zoomIdentity);
@@ -120,6 +127,18 @@ export function MapCanvas({ activeLegIds, timeDays, onSelectVenue, flyTo }: MapC
     if (flyTo) flyToVenue(flyTo.venueId);
   }, [flyTo, flyToVenue]);
 
+  const resetView = () => {
+    const svgEl = svgRef.current;
+    const behavior = behaviorRef.current;
+    if (!svgEl || !behavior) return;
+    const sel = select(svgEl);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      sel.call(behavior.transform, zoomIdentity);
+    } else {
+      sel.transition().duration(650).call(behavior.transform, zoomIdentity);
+    }
+  };
+
   const k = t.k;
   const dotR = 3.8 / Math.sqrt(k);
 
@@ -161,6 +180,21 @@ export function MapCanvas({ activeLegIds, timeDays, onSelectVenue, flyTo }: MapC
             </g>
           ))}
 
+          {selectedVenueId &&
+            (() => {
+              const dot = venueDots.find((d) => d.venue.id === selectedVenueId);
+              if (!dot || dot.firstDay > timeDays) return null;
+              return (
+                <circle
+                  className="dot-select-ring"
+                  cx={dot.point[0]}
+                  cy={dot.point[1]}
+                  r={dotR * 2.6}
+                  strokeWidth={1.2 / Math.sqrt(k)}
+                />
+              );
+            })()}
+
           {venueDots.map((dot) => {
             const { venue, point, color, shows, firstDay } = dot;
             if (firstDay > timeDays) return null; // not reached yet on the timeline
@@ -201,6 +235,19 @@ export function MapCanvas({ activeLegIds, timeDays, onSelectVenue, flyTo }: MapC
           })}
         </g>
       </svg>
+
+      {k > 1.02 && (
+        <button type="button" className="map-reset" onClick={resetView} aria-label="Reset map view">
+          <svg viewBox="0 0 14 14" aria-hidden="true">
+            <path
+              d="M1 5V1h4M9 1h4v4M13 9v4H9M5 13H1V9"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+            />
+          </svg>
+        </button>
+      )}
 
       {hover && (
         <div className="tooltip" style={{ left: hover.x, top: hover.y }}>
