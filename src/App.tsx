@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { DetailPanel } from './components/DetailPanel';
 import { LegRail } from './components/LegRail';
 import { ListView } from './components/ListView';
-import { MapCanvas } from './components/MapCanvas';
+import { MapCanvas, type FlyRequest } from './components/MapCanvas';
 import { Scrubber } from './components/Scrubber';
 import { legs } from './data/legs';
 import { milesAt, showsPlayedAt } from './lib/derive';
@@ -42,6 +42,7 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
   const [view, setView] = useState<'map' | 'list'>('map');
+  const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
 
   useEffect(() => {
     if (!playing) return;
@@ -87,6 +88,13 @@ export function App() {
     setSelectedVenueId(venueId);
   };
 
+  // Run-list and list-view clicks also navigate: switch to the map and fly there.
+  const handleNavigateToVenue = (venueId: string) => {
+    handleSelectVenue(venueId);
+    setView('map');
+    setFlyRequest((prev) => ({ venueId, seq: (prev?.seq ?? 0) + 1 }));
+  };
+
   const odometerMiles = useOdometer(milesAt(timeDays));
 
   return (
@@ -124,15 +132,16 @@ export function App() {
             activeLegIds={activeLegIds}
             timeDays={timeDays}
             onSelectVenue={handleSelectVenue}
+            flyTo={flyRequest}
           />
         ) : (
-          <ListView activeLegIds={activeLegIds} onSelectVenue={handleSelectVenue} />
+          <ListView activeLegIds={activeLegIds} onSelectVenue={handleNavigateToVenue} />
         )}
         {selectedVenueId && (
           <DetailPanel
             venueId={selectedVenueId}
             onClose={() => setSelectedVenueId(null)}
-            onSelectVenue={handleSelectVenue}
+            onSelectVenue={handleNavigateToVenue}
           />
         )}
       </main>

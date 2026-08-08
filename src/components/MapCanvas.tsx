@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { geoPath } from 'd3-geo';
 import { select } from 'd3-selection';
-import { zoom, zoomIdentity, type ZoomTransform } from 'd3-zoom';
+import 'd3-transition'; // registers selection.transition for animated zooms
+import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zoom';
 import { merge, mesh } from 'topojson-client';
 import type { Topology, GeometryCollection, Polygon, MultiPolygon } from 'topojson-specification';
 import statesTopo from 'us-atlas/states-albers-10m.json';
@@ -25,18 +26,25 @@ interface Hover {
   y: number;
 }
 
+export interface FlyRequest {
+  venueId: string;
+  seq: number; // bump to re-fly to the same venue
+}
+
 interface MapCanvasProps {
   activeLegIds: Set<string>;
   timeDays: number;
   onSelectVenue: (venueId: string) => void;
+  flyTo: FlyRequest | null;
 }
 
-export function MapCanvas({ activeLegIds, timeDays, onSelectVenue }: MapCanvasProps) {
+export function MapCanvas({ activeLegIds, timeDays, onSelectVenue, flyTo }: MapCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const behaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [t, setT] = useState<ZoomTransform>(zoomIdentity);
   const [hover, setHover] = useState<Hover | null>(null);
 
-  const { nationPath, statesPath, viewBox, extent } = useMemo(() => {
+  const { nationPath, statesPath, viewBox, vb, extent } = useMemo(() => {
     const path = geoPath(); // us-atlas geometry is preprojected — identity path
     const kept = topo.objects.states.geometries.filter(
       (g) => !EXCLUDED_FIPS.has(String(g.id)),
@@ -45,10 +53,12 @@ export function MapCanvas({ activeLegIds, timeDays, onSelectVenue }: MapCanvasPr
     const keptCollection: GeometryCollection = { type: 'GeometryCollection', geometries: kept };
     const [[x0, y0], [x1, y1]] = path.bounds(nation);
     const pad = 14;
+    const vbRect = { x: x0 - pad, y: y0 - pad, w: x1 - x0 + pad * 2, h: y1 - y0 + pad * 2 };
     return {
       nationPath: path(nation) ?? '',
       statesPath: path(mesh(topo, keptCollection, (a, b) => a !== b)) ?? '',
-      viewBox: `${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}`,
+      viewBox: `${vbRect.x} ${vbRect.y} ${vbRect.w} ${vbRect.h}`,
+      vb: vbRect,
       extent: [
         [x0 - pad, y0 - pad],
         [x1 + pad, y1 + pad],
@@ -64,10 +74,51 @@ export function MapCanvas({ activeLegIds, timeDays, onSelectVenue }: MapCanvasPr
       .translateExtent(extent)
       .on('zoom', (event) => setT(event.transform));
     svg.call(behavior);
+    behaviorRef.current = behavior;
     return () => {
       svg.on('.zoom', null);
+      behaviorRef.current = null;
     };
   }, [extent]);
+
+  const flyToVenue = useCallback(
+    (venueId: string) => {
+      const dot = venueDots.find((d) => d.venue.id === venueId);
+      const svgEl = svgRef.current;
+      const behavior = behaviorRef.current;
+      if (!dot || !svgEl || !behavior) return;
+
+      const K = 5;
+      const cw = svgEl.clientWidth;
+      const ch = svgEl.clientHeight;
+      const s = Math.min(cw / vb.w, ch / vb.h); // rendered px per viewBox unit
+      const ox = (cw - vb.w * s) / 2; // letterbox offsets from preserveAspectRatio
+      const oy = (ch - vb.h * s) / 2;
+
+      // Land the venue in the part of the stage the detail panel doesn't cover:
+      // left of the side panel on desktop, above the bottom sheet on mobile.
+      const isMobile = window.innerWidth <= 760;
+      const targetX = isMobile ? cw / 2 : Math.max(cw / 2 - 195, cw * 0.25);
+      const targetY = isMobile ? ch * 0.35 : ch / 2;
+      const vtx = vb.x + (targetX - ox) / s;
+      const vty = vb.y + (targetY - oy) / s;
+      const target = zoomIdentity
+        .translate(vtx - K * dot.point[0], vty - K * dot.point[1])
+        .scale(K);
+
+      const sel = select(svgEl);
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        sel.call(behavior.transform, target);
+      } else {
+        sel.transition().duration(850).call(behavior.transform, target);
+      }
+    },
+    [vb],
+  );
+
+  useEffect(() => {
+    if (flyTo) flyToVenue(flyTo.venueId);
+  }, [flyTo, flyToVenue]);
 
   const k = t.k;
   const dotR = 3.8 / Math.sqrt(k);
