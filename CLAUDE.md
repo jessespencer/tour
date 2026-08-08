@@ -1,8 +1,9 @@
 # Tour Map
 
 Interactive touring-history map. Vite + React + TS, D3 for geo/zoom only —
-rendering is React-owned SVG. The full product brief lives outside the repo
-(user-provided spec document); data conventions are in the README.
+rendering is React-owned SVG. The product brief is `docs/spec.md`; the source
+chronology behind `src/data/` is `docs/touring-chronology-2013-2014.md`;
+data conventions are in the README.
 
 ## Non-obvious constraints
 
