@@ -24,7 +24,10 @@ export function LegRail({ activeLegIds, onToggle }: LegRailProps) {
           >
             <span className="leg-swatch" style={{ background: leg.color }} aria-hidden="true" />
             <span className="leg-text">
-              <span className="leg-name">{leg.name}</span>
+              <span className="leg-name leg-name--full">{leg.name}</span>
+              <span className="leg-name leg-name--short" aria-hidden="true">
+                {leg.shortName}
+              </span>
               <span className="leg-meta">
                 {formatRange(leg.startDate, leg.endDate)} · {count} {count === 1 ? 'show' : 'shows'}
               </span>

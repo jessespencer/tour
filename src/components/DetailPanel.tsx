@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { legById, legRoutes, venueById } from '../lib/derive';
 import { formatDate } from '../lib/format';
 import type { Show } from '../types';
@@ -22,6 +22,12 @@ interface DetailPanelProps {
 }
 
 export function DetailPanel({ venueId, onClose, onSelectVenue }: DetailPanelProps) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+  }, [venueId]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -39,7 +45,13 @@ export function DetailPanel({ venueId, onClose, onSelectVenue }: DetailPanelProp
 
   return (
     <aside className="detail" role="dialog" aria-label={venue.name || `Venue in ${venue.city}`}>
-      <button type="button" className="detail-close" onClick={onClose} aria-label="Close details">
+      <button
+        ref={closeRef}
+        type="button"
+        className="detail-close"
+        onClick={onClose}
+        aria-label="Close details"
+      >
         ×
       </button>
 

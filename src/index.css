@@ -74,7 +74,31 @@ body {
 
 .header-stats {
   display: flex;
+  align-items: flex-end;
   gap: 2rem;
+}
+
+.view-toggle {
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--hairline);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.view-toggle:hover {
+  border-color: var(--muted);
+}
+
+.view-toggle:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: 2px;
 }
 
 .stat {
@@ -161,6 +185,10 @@ body {
   font-size: 0.92rem;
   line-height: 1.15;
   letter-spacing: 0.015em;
+}
+
+.leg-name--short {
+  display: none;
 }
 
 .leg-meta {
@@ -589,6 +617,54 @@ body {
   margin-top: 0.12rem;
 }
 
+/* ── list view ──────────────────────────────────────────────────────────── */
+
+.stage--list {
+  overflow-y: auto;
+}
+
+.list-view {
+  margin: 0;
+  padding: 0.8rem 1rem 1.5rem;
+  list-style: none;
+  max-width: 720px;
+}
+
+.list-row button {
+  display: grid;
+  grid-template-columns: 6.8rem 9px 1fr;
+  gap: 0.65rem;
+  align-items: start;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.list-row button:hover {
+  background: rgba(233, 234, 228, 0.05);
+}
+
+.list-row button:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: -1.5px;
+}
+
+.list-row--dim {
+  opacity: 0.28;
+}
+
+.list-swatch {
+  width: 9px;
+  height: 9px;
+  margin-top: 0.25rem;
+  border-radius: 2px;
+}
+
 /* ── tooltip ────────────────────────────────────────────────────────────── */
 
 .tooltip {
@@ -646,6 +722,132 @@ body {
   color: var(--paper);
   text-decoration-color: var(--muted);
   text-underline-offset: 3px;
+}
+
+/* ── mobile ─────────────────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+
+  .app {
+    height: auto;
+    min-height: 100dvh;
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 55dvh auto auto auto;
+    grid-template-areas:
+      'header'
+      'stage'
+      'rail'
+      'scrub'
+      'footer';
+  }
+
+  .header {
+    padding: 0.9rem 1rem 0.7rem;
+  }
+
+  .header-title {
+    font-size: 1.25rem;
+  }
+
+  .header-stats {
+    gap: 1.1rem;
+  }
+
+  .stat-value {
+    font-size: 1rem;
+  }
+
+  /* leg rail becomes a horizontally scrolling chip row under the map */
+  .leg-rail {
+    flex-direction: row;
+    gap: 0.4rem;
+    padding: 0.6rem 0.8rem;
+    border-right: 0;
+    border-top: 1px solid var(--hairline);
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .leg-item {
+    flex: none;
+    grid-template-columns: 10px auto;
+    align-items: center;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--hairline);
+    border-radius: 999px;
+  }
+
+  .leg-swatch {
+    margin-top: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .leg-name--full,
+  .leg-meta {
+    display: none;
+  }
+
+  .leg-name--short {
+    display: inline;
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+  }
+
+  .scrubber {
+    padding: 0.7rem 1rem 0.9rem;
+  }
+
+  .scrub-track {
+    height: 44px; /* larger touch target */
+  }
+
+  .scrub-date {
+    min-width: 7ch;
+    font-size: 0.6rem;
+  }
+
+  /* detail becomes a bottom sheet */
+  .detail {
+    position: fixed;
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: 72dvh;
+    border-left: 0;
+    border-top: 1px solid var(--hairline);
+    border-radius: 10px 10px 0 0;
+    animation: detail-up 0.25s ease-out;
+  }
+
+  .footer {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.4rem;
+    padding: 0.7rem 1rem;
+  }
+}
+
+@keyframes detail-up {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

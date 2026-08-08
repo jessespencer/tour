@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DetailPanel } from './components/DetailPanel';
 import { LegRail } from './components/LegRail';
+import { ListView } from './components/ListView';
 import { MapCanvas } from './components/MapCanvas';
 import { Scrubber } from './components/Scrubber';
 import { legs } from './data/legs';
@@ -40,6 +41,7 @@ export function App() {
   const [timeDays, setTimeDays] = useState(TOTAL_DAYS);
   const [playing, setPlaying] = useState(false);
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
+  const [view, setView] = useState<'map' | 'list'>('map');
 
   useEffect(() => {
     if (!playing) return;
@@ -95,6 +97,14 @@ export function App() {
           <p className="header-sub">Drums for Matt Hires · 2013–2014</p>
         </div>
         <div className="header-stats">
+          <button
+            type="button"
+            className="view-toggle"
+            onClick={() => setView((v) => (v === 'map' ? 'list' : 'map'))}
+            aria-pressed={view === 'list'}
+          >
+            {view === 'map' ? 'List' : 'Map'}
+          </button>
           <div className="stat">
             <span className="stat-value">{showsPlayedAt(timeDays)}</span>
             <span className="stat-label">shows</span>
@@ -108,12 +118,16 @@ export function App() {
 
       <LegRail activeLegIds={activeLegIds} onToggle={toggleLeg} />
 
-      <main className="stage">
-        <MapCanvas
-          activeLegIds={activeLegIds}
-          timeDays={timeDays}
-          onSelectVenue={handleSelectVenue}
-        />
+      <main className={view === 'list' ? 'stage stage--list' : 'stage'}>
+        {view === 'map' ? (
+          <MapCanvas
+            activeLegIds={activeLegIds}
+            timeDays={timeDays}
+            onSelectVenue={handleSelectVenue}
+          />
+        ) : (
+          <ListView activeLegIds={activeLegIds} onSelectVenue={handleSelectVenue} />
+        )}
         {selectedVenueId && (
           <DetailPanel
             venueId={selectedVenueId}
@@ -123,12 +137,14 @@ export function App() {
         )}
       </main>
 
-      <Scrubber
-        value={timeDays}
-        playing={playing}
-        onScrub={handleScrub}
-        onTogglePlay={handleTogglePlay}
-      />
+      {view === 'map' && (
+        <Scrubber
+          value={timeDays}
+          playing={playing}
+          onScrub={handleScrub}
+          onTogglePlay={handleTogglePlay}
+        />
+      )}
 
       <footer className="footer">
         <span>Dates & venues verified against original tour itineraries and day sheets</span>
