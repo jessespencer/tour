@@ -1,0 +1,319 @@
+:root {
+  /* night-atlas palette — highway-sign colors on dark ground */
+  --ground: #101210;
+  --panel: #0C0E0C;
+  --paper: #E9EAE4;
+  --muted: #878B81;
+  --hairline: rgba(233, 234, 228, 0.14);
+  --state-line: rgba(233, 234, 228, 0.07);
+  --nation-line: rgba(233, 234, 228, 0.32);
+
+  --font-display: 'Archivo Narrow', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--ground);
+  color: var(--paper);
+  font-family: var(--font-body);
+}
+
+.app {
+  display: grid;
+  height: 100%;
+  grid-template-rows: auto 1fr auto;
+  grid-template-columns: 272px 1fr;
+  grid-template-areas:
+    'header header'
+    'rail stage'
+    'footer footer';
+}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+
+.header {
+  grid-area: header;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 1.5rem 0.9rem;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.header-title {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.7rem;
+  line-height: 1;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.header-sub {
+  margin-top: 0.45rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.header-stats {
+  display: flex;
+  gap: 2rem;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+
+.stat-value {
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 1.25rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-label {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── leg rail ───────────────────────────────────────────────────────────── */
+
+.leg-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.9rem 0.7rem;
+  border-right: 1px solid var(--hairline);
+  overflow-y: auto;
+}
+
+.leg-item {
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.55rem 0.6rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.25s;
+}
+
+.leg-item:hover {
+  background: rgba(233, 234, 228, 0.05);
+}
+
+.leg-item:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: -1.5px;
+}
+
+.leg-item--off {
+  opacity: 0.32;
+}
+
+.leg-swatch {
+  width: 12px;
+  height: 12px;
+  margin-top: 0.2rem;
+  border-radius: 2px;
+}
+
+.leg-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.leg-name {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 0.92rem;
+  line-height: 1.15;
+  letter-spacing: 0.015em;
+}
+
+.leg-meta {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ── map stage ──────────────────────────────────────────────────────────── */
+
+.stage {
+  grid-area: stage;
+  position: relative;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  background: radial-gradient(ellipse 70% 65% at 50% 45%, transparent 60%, rgba(0, 0, 0, 0.42));
+}
+
+.stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0.05;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.map-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.map-canvas:active {
+  cursor: grabbing;
+}
+
+.map-nation {
+  fill: none;
+  stroke: var(--nation-line);
+}
+
+.map-states {
+  fill: none;
+  stroke: var(--state-line);
+}
+
+.leg-route path {
+  fill: none;
+  stroke-linecap: round;
+  opacity: 0.95;
+  transition: opacity 0.3s;
+}
+
+.leg-route--off path {
+  opacity: 0.05;
+}
+
+.dot {
+  transition: opacity 0.3s;
+}
+
+.dot--off {
+  opacity: 0.06;
+  pointer-events: none;
+}
+
+.dot-halo {
+  opacity: 0.22;
+  transition: opacity 0.15s;
+}
+
+.dot:hover .dot-halo {
+  opacity: 0.45;
+}
+
+/* ── tooltip ────────────────────────────────────────────────────────────── */
+
+.tooltip {
+  position: fixed;
+  z-index: 10;
+  transform: translate(14px, 12px);
+  max-width: 270px;
+  padding: 0.6rem 0.75rem;
+  background: rgba(12, 14, 12, 0.94);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  pointer-events: none;
+  font-family: var(--font-mono);
+}
+
+.tooltip-venue {
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tooltip-city {
+  margin-top: 0.15rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.tooltip-date {
+  margin-top: 0.3rem;
+  font-size: 0.65rem;
+  letter-spacing: 0.05em;
+  color: var(--paper);
+}
+
+/* ── footer ─────────────────────────────────────────────────────────────── */
+
+.footer {
+  grid-area: footer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1.5rem;
+  border-top: 1px solid var(--hairline);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.footer a {
+  color: var(--paper);
+  text-decoration-color: var(--muted);
+  text-underline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leg-route path,
+  .dot,
+  .leg-item {
+    transition: none;
+  }
+}
