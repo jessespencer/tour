@@ -1,7 +1,8 @@
 import { legs } from '../data/legs';
+import { photos } from '../data/photos';
 import { shows } from '../data/shows';
 import { venues } from '../data/venues';
-import type { Leg, Show, Venue } from '../types';
+import type { Leg, Photo, Show, Venue } from '../types';
 import { estimatedRoadMiles, projectVenue, segmentPath, sortShows } from './geo';
 import { dayOf } from './time';
 
@@ -90,6 +91,67 @@ export const venueDots: VenueDot[] = venues
     return [{ venue, point, shows: venueShows, color, firstDay: dayOf(venueShows[0].date) }];
   })
   .sort((a, b) => a.firstDay - b.firstDay);
+
+export const photosByShow = new Map<string, Photo[]>();
+for (const photo of photos) {
+  const list = photosByShow.get(photo.showId) ?? [];
+  list.push(photo);
+  photosByShow.set(photo.showId, list);
+}
+for (const list of photosByShow.values()) {
+  list.sort((a, b) => a.takenAt.localeCompare(b.takenAt));
+}
+
+export function photoThumb(p: Photo): string {
+  return `/photos/${p.showId}/${p.id}_t.jpg`;
+}
+
+export function photoLarge(p: Photo): string {
+  return `/photos/${p.showId}/${p.id}_l.jpg`;
+}
+
+export function photoAlt(p: Photo): string {
+  const show = showById.get(p.showId);
+  const venue = show ? venueById.get(show.venueId) : undefined;
+  const where = venue ? `${venue.name || venue.city}, ${venue.city} ${venue.state}` : p.showId;
+  return `Photo near ${where} — ${p.takenAt.slice(0, 10)}`;
+}
+
+/** GPS-tagged photos plotted at their exact coordinates, clustered when
+ *  several were shot in the same spot (~1 km grid). */
+export interface PhotoMarker {
+  key: string;
+  point: [number, number];
+  photos: Photo[];       // chronological
+  legId: string;
+  firstDay: number;
+}
+
+export const photoMarkers: PhotoMarker[] = (() => {
+  const clusters = new Map<string, Photo[]>();
+  for (const p of photos) {
+    if (p.lat === undefined || p.lng === undefined) continue;
+    const key = `${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
+    const list = clusters.get(key) ?? [];
+    list.push(p);
+    clusters.set(key, list);
+  }
+  const markers: PhotoMarker[] = [];
+  for (const [key, list] of clusters) {
+    list.sort((a, b) => a.takenAt.localeCompare(b.takenAt));
+    const first = list[0];
+    const point = projectVenue({ lat: first.lat!, lng: first.lng! } as Venue);
+    if (!point) continue;
+    markers.push({
+      key,
+      point,
+      photos: list,
+      legId: showById.get(first.showId)?.legId ?? '',
+      firstDay: dayOf(first.takenAt.slice(0, 10)),
+    });
+  }
+  return markers.sort((a, b) => a.firstDay - b.firstDay);
+})();
 
 export const totals = {
   shows: shows.length,

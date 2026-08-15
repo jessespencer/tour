@@ -6,8 +6,17 @@ import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zo
 import { merge, mesh } from 'topojson-client';
 import type { Topology, GeometryCollection, Polygon, MultiPolygon } from 'topojson-specification';
 import statesTopo from 'us-atlas/states-albers-10m.json';
-import { legRoutes, venueDots, type RouteSegment, type VenueDot } from '../lib/derive';
+import {
+  legRoutes,
+  photoMarkers,
+  photoThumb,
+  venueDots,
+  type PhotoMarker,
+  type RouteSegment,
+  type VenueDot,
+} from '../lib/derive';
 import { formatDate } from '../lib/format';
+import type { Photo } from '../types';
 
 const topo = statesTopo as unknown as Topology<{ states: GeometryCollection; nation: GeometryCollection }>;
 
@@ -20,11 +29,9 @@ function segmentProgress(seg: RouteSegment, day: number): number {
   return (day - seg.fromDay) / (seg.toDay - seg.fromDay);
 }
 
-interface Hover {
-  dot: VenueDot;
-  x: number;
-  y: number;
-}
+type Hover =
+  | { kind: 'venue'; dot: VenueDot; x: number; y: number }
+  | { kind: 'photo'; marker: PhotoMarker; x: number; y: number };
 
 export interface FlyRequest {
   venueId: string;
@@ -36,6 +43,7 @@ interface MapCanvasProps {
   timeDays: number;
   selectedVenueId: string | null;
   onSelectVenue: (venueId: string) => void;
+  onOpenPhotos: (photos: Photo[], index: number) => void;
   flyTo: FlyRequest | null;
 }
 
@@ -44,6 +52,7 @@ export function MapCanvas({
   timeDays,
   selectedVenueId,
   onSelectVenue,
+  onOpenPhotos,
   flyTo,
 }: MapCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -180,6 +189,40 @@ export function MapCanvas({
             </g>
           ))}
 
+          {photoMarkers.map((marker) => {
+            if (marker.firstDay > timeDays) return null;
+            const active = activeLegIds.has(marker.legId);
+            const size = 4.6 / Math.sqrt(k);
+            return (
+              <g
+                key={marker.key}
+                className={active ? 'photo-marker' : 'photo-marker photo-marker--off'}
+                role="button"
+                tabIndex={active ? 0 : -1}
+                aria-label={`${marker.photos.length} photo${marker.photos.length > 1 ? 's' : ''} taken here`}
+                onClick={() => onOpenPhotos(marker.photos, 0)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpenPhotos(marker.photos, 0);
+                  }
+                }}
+                onMouseEnter={(e) => setHover({ kind: 'photo', marker, x: e.clientX, y: e.clientY })}
+                onMouseMove={(e) => setHover({ kind: 'photo', marker, x: e.clientX, y: e.clientY })}
+                onMouseLeave={() => setHover(null)}
+              >
+                <rect
+                  x={marker.point[0] - size / 2}
+                  y={marker.point[1] - size / 2}
+                  width={size}
+                  height={size}
+                  transform={`rotate(45 ${marker.point[0]} ${marker.point[1]})`}
+                  strokeWidth={1 / Math.sqrt(k)}
+                />
+              </g>
+            );
+          })}
+
           {selectedVenueId &&
             (() => {
               const dot = venueDots.find((d) => d.venue.id === selectedVenueId);
@@ -214,8 +257,8 @@ export function MapCanvas({
                     onSelectVenue(venue.id);
                   }
                 }}
-                onMouseEnter={(e) => setHover({ dot, x: e.clientX, y: e.clientY })}
-                onMouseMove={(e) => setHover({ dot, x: e.clientX, y: e.clientY })}
+                onMouseEnter={(e) => setHover({ kind: 'venue', dot, x: e.clientX, y: e.clientY })}
+                onMouseMove={(e) => setHover({ kind: 'venue', dot, x: e.clientX, y: e.clientY })}
                 onMouseLeave={() => setHover(null)}
                 onFocus={() => setHover(null)}
               >
@@ -249,7 +292,7 @@ export function MapCanvas({
         </button>
       )}
 
-      {hover && (
+      {hover && hover.kind === 'venue' && (
         <div className="tooltip" style={{ left: hover.x, top: hover.y }}>
           <div className="tooltip-venue">{hover.dot.venue.name || 'Venue TBD'}</div>
           <div className="tooltip-city">
@@ -263,6 +306,21 @@ export function MapCanvas({
           {hover.dot.shows.length > 4 && (
             <div className="tooltip-date">+{hover.dot.shows.length - 4} more</div>
           )}
+        </div>
+      )}
+
+      {hover && hover.kind === 'photo' && (
+        <div className="tooltip tooltip--photo" style={{ left: hover.x, top: hover.y }}>
+          <img
+            src={photoThumb(hover.marker.photos[0])}
+            alt=""
+            className="tooltip-thumb"
+            loading="lazy"
+          />
+          <div className="tooltip-date">
+            {formatDate(hover.marker.photos[0].takenAt.slice(0, 10))}
+            {hover.marker.photos.length > 1 && ` · ${hover.marker.photos.length} photos`}
+          </div>
         </div>
       )}
     </>

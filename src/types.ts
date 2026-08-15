@@ -32,6 +32,16 @@ export interface Venue {
   address?: string;
 }
 
+export interface Photo {
+  id: string;               // filename stem, e.g. "20140607-184425"
+  showId: string;           // assigned show — GPS-verified when lat/lng present
+  takenAt: string;          // ISO datetime from the camera timestamp
+  lat?: number;             // exact EXIF GPS, when the camera had a fix
+  lng?: number;
+  camera?: string;
+  vsco?: boolean;           // VSCO-processed export (these usually lost GPS)
+}
+
 export interface Show {
   id: string;
   legId: string;

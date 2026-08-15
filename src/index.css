@@ -797,6 +797,193 @@ body {
   border-radius: 2px;
 }
 
+/* ── photos ─────────────────────────────────────────────────────────────── */
+
+.photo-marker {
+  outline: none;
+  cursor: pointer;
+  transition: opacity 0.3s;
+}
+
+.photo-marker rect {
+  fill: var(--paper);
+  stroke: var(--ground);
+  opacity: 0.9;
+}
+
+.photo-marker:hover rect,
+.photo-marker:focus-visible rect {
+  opacity: 1;
+  stroke: var(--paper);
+}
+
+.photo-marker--off {
+  opacity: 0.06;
+  pointer-events: none;
+}
+
+.tooltip--photo {
+  padding: 0.4rem;
+}
+
+.tooltip-thumb {
+  display: block;
+  width: 168px;
+  height: auto;
+  border-radius: 2px;
+}
+
+.tooltip--photo .tooltip-date {
+  margin-top: 0.35rem;
+}
+
+.detail-photos {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 0.8rem;
+}
+
+.photo-thumb {
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  line-height: 0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.photo-thumb img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+  filter: saturate(0.92);
+  transition: filter 0.15s;
+}
+
+.photo-thumb:hover img {
+  filter: saturate(1);
+}
+
+.photo-thumb:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: 1.5px;
+}
+
+.photo-gps {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 7px;
+  height: 7px;
+  background: var(--paper);
+  transform: rotate(45deg);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+}
+
+/* ── lightbox ───────────────────────────────────────────────────────────── */
+
+.lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: rgba(8, 9, 8, 0.93);
+}
+
+.lightbox-inner {
+  display: flex;
+  flex-direction: column;
+  max-width: min(1200px, 94vw);
+  max-height: 92vh;
+}
+
+.lightbox-close {
+  align-self: flex-end;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  margin-bottom: 0.4rem;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--paper);
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lightbox-close:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: 2px;
+}
+
+.lightbox-img {
+  max-width: 100%;
+  max-height: calc(92vh - 110px);
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.lightbox-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.6rem;
+}
+
+.lightbox-nav {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--paper);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lightbox-nav:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+.lightbox-nav:focus-visible {
+  outline: 1.5px solid var(--paper);
+  outline-offset: 2px;
+}
+
+.lightbox-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.lightbox-place {
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+}
+
+.lightbox-meta {
+  font-size: 0.6rem;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+
 /* ── tooltip ────────────────────────────────────────────────────────────── */
 
 .tooltip {

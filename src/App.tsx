@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DetailPanel } from './components/DetailPanel';
 import { LegRail } from './components/LegRail';
+import { Lightbox } from './components/Lightbox';
 import { ListView } from './components/ListView';
 import { MapCanvas, type FlyRequest } from './components/MapCanvas';
 import { Scrubber } from './components/Scrubber';
@@ -8,6 +9,7 @@ import { ShowStepper } from './components/ShowStepper';
 import { legs } from './data/legs';
 import { milesAt, showById, showsPlayedAt, venueDots } from './lib/derive';
 import { TOTAL_DAYS } from './lib/time';
+import type { Photo } from './types';
 
 const PLAY_SPEED = 36.5; // timeline days per second ≈ 10s per year
 
@@ -45,6 +47,7 @@ export function App() {
   const [selectedShowId, setSelectedShowId] = useState<string | null>(null);
   const [view, setView] = useState<'map' | 'list'>('map');
   const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
+  const [lightbox, setLightbox] = useState<{ photos: Photo[]; index: number } | null>(null);
 
   const activeLegIds = selectedLegIds.size === 0 ? ALL_LEG_IDS : selectedLegIds;
   const selectedShow = selectedShowId ? showById.get(selectedShowId) : undefined;
@@ -106,6 +109,11 @@ export function App() {
     setFlyRequest((prev) => ({ venueId: show.venueId, seq: (prev?.seq ?? 0) + 1 }));
   };
 
+  const handleOpenPhotos = (photos: Photo[], index: number) => {
+    setPlaying(false);
+    setLightbox({ photos, index });
+  };
+
   const odometerMiles = useOdometer(milesAt(timeDays));
 
   return (
@@ -149,6 +157,7 @@ export function App() {
             timeDays={timeDays}
             selectedVenueId={selectedVenueId}
             onSelectVenue={handleSelectVenue}
+            onOpenPhotos={handleOpenPhotos}
             flyTo={flyRequest}
           />
         ) : (
@@ -160,9 +169,19 @@ export function App() {
             selectedShowId={selectedShowId}
             onClose={() => setSelectedShowId(null)}
             onSelectShow={handleNavigateToShow}
+            onOpenPhotos={handleOpenPhotos}
           />
         )}
       </main>
+
+      {lightbox && (
+        <Lightbox
+          photos={lightbox.photos}
+          index={lightbox.index}
+          onNav={(index) => setLightbox({ ...lightbox, index })}
+          onClose={() => setLightbox(null)}
+        />
+      )}
 
       {view === 'map' && (
         <Scrubber

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { legById, legRoutes, venueById } from '../lib/derive';
+import { legById, legRoutes, photoAlt, photosByShow, photoThumb, venueById } from '../lib/derive';
 import { formatDate } from '../lib/format';
-import type { Show } from '../types';
+import type { Photo, Show } from '../types';
 
 const TYPE_LABELS: Record<Show['type'], string> = {
   support: 'Support',
@@ -20,9 +20,16 @@ interface DetailPanelProps {
   selectedShowId: string | null;
   onClose: () => void;
   onSelectShow: (showId: string) => void;
+  onOpenPhotos: (photos: Photo[], index: number) => void;
 }
 
-export function DetailPanel({ venueId, selectedShowId, onClose, onSelectShow }: DetailPanelProps) {
+export function DetailPanel({
+  venueId,
+  selectedShowId,
+  onClose,
+  onSelectShow,
+  onOpenPhotos,
+}: DetailPanelProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -114,6 +121,26 @@ export function DetailPanel({ venueId, selectedShowId, onClose, onSelectShow }: 
             </dl>
             {show.note && <p className="detail-note">{show.note}</p>}
             {!show.confirmed && <p className="detail-unconfirmed">In the record, not yet verified</p>}
+            {(() => {
+              const showPhotos = photosByShow.get(show.id);
+              if (!showPhotos?.length) return null;
+              return (
+                <div className="detail-photos">
+                  {showPhotos.map((p, i) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className="photo-thumb"
+                      onClick={() => onOpenPhotos(showPhotos, i)}
+                      aria-label={photoAlt(p)}
+                    >
+                      <img src={photoThumb(p)} alt={photoAlt(p)} loading="lazy" />
+                      {p.lat !== undefined && <span className="photo-gps" aria-hidden="true" />}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
           </section>
         );
       })}
