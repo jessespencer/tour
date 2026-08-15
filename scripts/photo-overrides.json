@@ -1,0 +1,6 @@
+{
+  "//": "Manual corrections applied by import-photos.py, keyed by path relative to the source folder. Use for cameras with unset clocks or misassigned files. takenAt times of 12:00 mean 'date known from photo content, time unknown'.",
+  "IMG_0363.jpg": { "showId": "2014-05-28-atlanta", "takenAt": "2014-05-28T12:00:47" },
+  "IMG_0381.jpg": { "showId": "2014-05-28-atlanta", "takenAt": "2014-05-28T12:05:06" },
+  "Minneapolis/IMG_0478.JPG": { "takenAt": "2014-06-08T12:00:32" }
+}

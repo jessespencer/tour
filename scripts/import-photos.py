@@ -10,6 +10,9 @@ Assignment rules, in order:
 
 Capture time comes from the `YYYY-MM-DD HH.MM.SS` filename when present,
 falling back to Spotlight's content-creation date (GoPro/DSLR files).
+scripts/photo-overrides.json supplies manual corrections (keyed by path
+relative to the source folder) for cameras with unset clocks — override
+takenAt and/or showId there; they win over every automatic rule.
 
 Outputs:
   - public/photos/{showId}/{stem}_t.jpg + _l.jpg  (400/1600px derivatives;
@@ -21,6 +24,7 @@ Outputs:
 Usage: python3 scripts/import-photos.py "<source folder>" <legId>
 """
 
+import json
 import math
 import os
 import re
@@ -115,6 +119,11 @@ def main():
                 return s
         return None
 
+    overrides_path = os.path.join(REPO, "scripts", "photo-overrides.json")
+    overrides = {}
+    if os.path.exists(overrides_path):
+        overrides = {k: v for k, v in json.load(open(overrides_path)).items() if k != "//"}
+
     entries = []
     skipped = []
     for root, _dirs, files in os.walk(src_dir):
@@ -131,8 +140,16 @@ def main():
             if ext not in ("jpg", "jpeg", "png", "mov"):
                 skipped.append(fname)
                 continue
+            rel = os.path.relpath(path, src_dir)
+            override = overrides.get(rel)
             m = NAME_RE.match(fname)
-            if m:
+            if override and "takenAt" in override:
+                y, mo, d = override["takenAt"][0:4], override["takenAt"][5:7], override["takenAt"][8:10]
+                hh, mi, ss = override["takenAt"][11:13], override["takenAt"][14:16], override["takenAt"][17:19]
+                slug = re.sub(r"[^a-z0-9]+", "", fname.rsplit(".", 1)[0].lower())
+                stem = f"{y}{mo}{d}-{hh}{mi}{ss}-{slug}"
+                twin_key = stem
+            elif m:
                 y, mo, d, hh, mi, ss, suffix, _ = m.groups()
                 stem = f"{y}{mo}{d}-{hh}{mi}{ss}" + (suffix or "")
                 twin_key = f"{y}-{mo}-{d} {hh}.{mi}.{ss}"
@@ -160,11 +177,15 @@ def main():
                 "vsco": ext != "mov" and is_vsco(path),
                 "video": ext == "mov",
                 "forced": folder_show,
+                "override_show": override.get("showId") if override else None,
             })
 
     gps_by_twin = {e["twin_key"]: (e["lat"], e["lng"]) for e in entries if e["lat"] is not None}
 
     for e in entries:
+        if e["override_show"]:
+            e["showId"] = e["override_show"]
+            continue
         if e["forced"]:
             e["showId"] = e["forced"][0]
             continue
