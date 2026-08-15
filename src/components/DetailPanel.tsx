@@ -135,6 +135,7 @@ export function DetailPanel({
                       aria-label={photoAlt(p)}
                     >
                       <img src={photoThumb(p)} alt={photoAlt(p)} loading="lazy" />
+                      {p.kind === 'video' && <span className="photo-play" aria-hidden="true" />}
                       {p.lat !== undefined && <span className="photo-gps" aria-hidden="true" />}
                     </button>
                   ))}

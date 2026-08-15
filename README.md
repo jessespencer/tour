@@ -37,8 +37,13 @@ python3 scripts/import-photos.py "<folder of timestamped photos>" <legId>
 
 Originals stay wherever they live (Dropbox); only derivatives are committed.
 EXIF is currently NOT stripped from derivatives — do that before any public
-deploy. GPS-tagged photos also render as diamond markers at their exact
-coordinates on the map.
+deploy. Photos render as image-tile stacks on the map — at exact GPS
+coordinates when the camera had a fix, at the assigned venue otherwise.
+
+Videos (.mov) are copied to `public/videos/` with extracted poster frames.
+That directory is **gitignored** (files exceed remote size limits) — videos
+exist only on machines that have run the import script. A clone without them
+still works; video tiles just 404 on play.
 
 ## Deploy
 

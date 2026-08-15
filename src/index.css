@@ -799,42 +799,52 @@ body {
 
 /* ── photos ─────────────────────────────────────────────────────────────── */
 
-.photo-marker {
+.map-counties {
+  fill: none;
+  stroke: rgba(233, 234, 228, 0.05);
+  transition: opacity 0.4s;
+}
+
+.photo-tile {
   outline: none;
   cursor: pointer;
   transition: opacity 0.3s;
 }
 
-.photo-marker rect {
-  fill: var(--paper);
-  stroke: var(--ground);
-  opacity: 0.9;
+.photo-tile image {
+  filter: saturate(0.95);
 }
 
-.photo-marker:hover rect,
-.photo-marker:focus-visible rect {
-  opacity: 1;
+.tile-frame {
+  fill: none;
   stroke: var(--paper);
+  opacity: 0.75;
 }
 
-.photo-marker--off {
-  opacity: 0.06;
+.photo-tile:hover .tile-frame,
+.photo-tile:focus-visible .tile-frame {
+  opacity: 1;
+}
+
+.photo-tile--off {
+  opacity: 0.05;
   pointer-events: none;
 }
 
-.tooltip--photo {
-  padding: 0.4rem;
+.tile-play {
+  fill: var(--paper);
+  stroke: rgba(8, 9, 8, 0.55);
+  paint-order: stroke;
 }
 
-.tooltip-thumb {
-  display: block;
-  width: 168px;
-  height: auto;
-  border-radius: 2px;
+.tile-count-bg {
+  fill: var(--paper);
 }
 
-.tooltip--photo .tooltip-date {
-  margin-top: 0.35rem;
+.tile-count {
+  fill: var(--ground);
+  font-family: var(--font-mono);
+  font-weight: 500;
 }
 
 .detail-photos {
@@ -882,6 +892,19 @@ body {
   background: var(--paper);
   transform: rotate(45deg);
   box-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
+}
+
+.photo-play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 0;
+  height: 0;
+  border-left: 12px solid var(--paper);
+  border-top: 8px solid transparent;
+  border-bottom: 8px solid transparent;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
 }
 
 /* ── lightbox ───────────────────────────────────────────────────────────── */

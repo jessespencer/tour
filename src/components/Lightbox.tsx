@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { photoAlt, photoLarge, showById, venueById } from '../lib/derive';
+import { photoAlt, photoLarge, showById, venueById, videoSrc } from '../lib/derive';
 import { formatDate } from '../lib/format';
 import type { Photo } from '../types';
 
@@ -44,7 +44,18 @@ export function Lightbox({ photos, index, onNav, onClose }: LightboxProps) {
         >
           ×
         </button>
-        <img className="lightbox-img" src={photoLarge(photo)} alt={photoAlt(photo)} />
+        {photo.kind === 'video' ? (
+          <video
+            key={photo.id}
+            className="lightbox-img"
+            src={videoSrc(photo)}
+            poster={photoLarge(photo)}
+            controls
+            playsInline
+          />
+        ) : (
+          <img className="lightbox-img" src={photoLarge(photo)} alt={photoAlt(photo)} />
+        )}
         <div className="lightbox-bar">
           <button
             type="button"
@@ -61,6 +72,7 @@ export function Lightbox({ photos, index, onNav, onClose }: LightboxProps) {
             </span>
             <span className="lightbox-meta">
               {formatDate(photo.takenAt.slice(0, 10))}
+              {photo.kind === 'video' ? ' · Video' : ''}
               {photo.camera ? ` · ${photo.camera}` : ''}
               {photo.lat !== undefined ? ' · GPS' : ''}
               {photo.vsco ? ' · VSCO' : ''}

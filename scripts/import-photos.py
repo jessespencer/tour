@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""Import tour photos: assign each to a show, resize, and emit src/data/photos.ts.
+"""Import tour photos & videos: assign to shows, resize, emit src/data/photos.ts.
 
 Assignment rules, in order:
-  1. GPS within 25 mi of a venue on the target leg -> that venue's show
+  1. File lives in a subfolder named after a tour city -> that city's show
+  2. GPS within 25 mi of a venue on the target leg -> that venue's show
      (filename twins like `X.jpg` / `X-1.jpg` share the GPS of their sibling)
-  2. Otherwise nearest show by date; ties go to the LATER show (touring moves
+  3. Otherwise nearest show by date; ties go to the LATER show (touring moves
      forward — off-day files belong to the journey toward the next city)
 
-Reads GPS via Spotlight (mdls), so originals never need exiftool. Originals
-are not copied — only resized derivatives land in public/photos/{showId}/.
+Capture time comes from the `YYYY-MM-DD HH.MM.SS` filename when present,
+falling back to Spotlight's content-creation date (GoPro/DSLR files).
+
+Outputs:
+  - public/photos/{showId}/{stem}_t.jpg + _l.jpg  (400/1600px derivatives;
+    for videos these are poster frames via qlmanage)
+  - public/videos/{showId}/{stem}.mov             (plain copies — gitignored,
+    local-only; too large for the remote)
+  - src/data/photos.ts
 
 Usage: python3 scripts/import-photos.py "<source folder>" <legId>
 """
@@ -16,8 +24,10 @@ Usage: python3 scripts/import-photos.py "<source folder>" <legId>
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import date
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +35,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GPS_VENUE_MILES = 25
 THUMB_PX = 400
 LIGHTBOX_PX = 1600
+
+NAME_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})\.(\d{2})(-\d+)?\.(jpe?g|png|mov)$", re.I)
+MDLS_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})")
 
 
 def read(path):
@@ -52,18 +65,40 @@ def miles(a, b, c, d):
     return 2 * 3958.8 * math.asin(math.sqrt(h))
 
 
+def poster_from_video(video_path, out_large, out_thumb):
+    """Render a poster frame for a .mov via Quick Look, then resize with sips."""
+    with tempfile.TemporaryDirectory() as tmp:
+        subprocess.run(
+            ["qlmanage", "-t", "-s", str(LIGHTBOX_PX), "-o", tmp, video_path],
+            capture_output=True,
+        )
+        png = os.path.join(tmp, os.path.basename(video_path) + ".png")
+        if not os.path.exists(png):
+            return False
+        for size, out in ((LIGHTBOX_PX, out_large), (THUMB_PX, out_thumb)):
+            subprocess.run(
+                ["sips", "-Z", str(size), "-s", "format", "jpeg",
+                 "-s", "formatOptions", "75", png, "--out", out],
+                capture_output=True, check=True,
+            )
+    return True
+
+
 def main():
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     src_dir, leg_id = sys.argv[1], sys.argv[2]
 
     venues = {}
+    venue_city = {}
+    vtext = read(f"{REPO}/src/data/venues.ts")
     for m in re.finditer(
-        r"id: '([^']+)',.*?lat: ([-\d.]+),\s*lng: ([-\d.]+)",
-        read(f"{REPO}/src/data/venues.ts"),
-        re.S,
+        r"id: '([^']+)',.*?city: (?:'([^']+)'|\"([^\"]+)\"),.*?lat: ([-\d.]+),\s*lng: ([-\d.]+)",
+        vtext, re.S,
     ):
-        venues[m.group(1)] = (float(m.group(2)), float(m.group(3)))
+        vid = m.group(1)
+        venues[vid] = (float(m.group(4)), float(m.group(5)))
+        venue_city[vid] = (m.group(2) or m.group(3)).lower()
 
     shows = []  # (showId, venueId, date)
     for m in re.finditer(
@@ -74,41 +109,68 @@ def main():
     if not shows:
         sys.exit(f"no shows found for leg {leg_id}")
 
-    name_re = re.compile(r"^(\d{4})-(\d{2})-(\d{2}) (\d{2})\.(\d{2})\.(\d{2})(-\d+)?\.(jpe?g|png)$", re.I)
+    def show_for_city(city):
+        for s in shows:
+            if venue_city.get(s[1]) == city.lower():
+                return s
+        return None
+
     entries = []
     skipped = []
-    for fname in sorted(os.listdir(src_dir)):
-        m = name_re.match(fname)
-        if not m:
-            skipped.append(fname)
+    for root, _dirs, files in os.walk(src_dir):
+        depth = os.path.relpath(root, src_dir)
+        if depth != "." and os.sep in depth:
+            continue  # one level of subfolders only
+        folder_show = None if depth == "." else show_for_city(depth)
+        if depth != "." and folder_show is None:
+            skipped.append(f"{depth}/ (no {leg_id} show in a city by that name)")
             continue
-        y, mo, d, hh, mm, ss, suffix, _ext = m.groups()
-        path = os.path.join(src_dir, fname)
-        lat = mdls(path, "kMDItemLatitude")
-        lng = mdls(path, "kMDItemLongitude")
-        entries.append({
-            "fname": fname,
-            "path": path,
-            "stem": f"{y}{mo}{d}-{hh}{mm}{ss}" + (suffix or ""),
-            "twin_key": f"{y}-{mo}-{d} {hh}.{mm}.{ss}",
-            "date": date(int(y), int(mo), int(d)),
-            "taken": f"{y}-{mo}-{d}T{hh}:{mm}:{ss}",
-            "lat": float(lat) if lat else None,
-            "lng": float(lng) if lng else None,
-            "camera": mdls(path, "kMDItemAcquisitionModel"),
-            "vsco": is_vsco(path),
-        })
+        for fname in sorted(files):
+            path = os.path.join(root, fname)
+            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+            if ext not in ("jpg", "jpeg", "png", "mov"):
+                skipped.append(fname)
+                continue
+            m = NAME_RE.match(fname)
+            if m:
+                y, mo, d, hh, mi, ss, suffix, _ = m.groups()
+                stem = f"{y}{mo}{d}-{hh}{mi}{ss}" + (suffix or "")
+                twin_key = f"{y}-{mo}-{d} {hh}.{mi}.{ss}"
+            else:
+                created = mdls(path, "kMDItemContentCreationDate")
+                dm = MDLS_DATE_RE.match(created or "")
+                if not dm:
+                    skipped.append(f"{fname} (no timestamp in name or metadata)")
+                    continue
+                y, mo, d, hh, mi, ss = dm.groups()
+                slug = re.sub(r"[^a-z0-9]+", "", fname.rsplit(".", 1)[0].lower())
+                stem = f"{y}{mo}{d}-{hh}{mi}{ss}-{slug}"
+                twin_key = stem
+            lat = mdls(path, "kMDItemLatitude")
+            lng = mdls(path, "kMDItemLongitude")
+            entries.append({
+                "path": path,
+                "stem": stem,
+                "twin_key": twin_key,
+                "date": date(int(y), int(mo), int(d)),
+                "taken": f"{y}-{mo}-{d}T{hh}:{mi}:{ss}",
+                "lat": float(lat) if lat else None,
+                "lng": float(lng) if lng else None,
+                "camera": mdls(path, "kMDItemAcquisitionModel"),
+                "vsco": ext != "mov" and is_vsco(path),
+                "video": ext == "mov",
+                "forced": folder_show,
+            })
 
-    # filename twins (original + edit) share GPS
     gps_by_twin = {e["twin_key"]: (e["lat"], e["lng"]) for e in entries if e["lat"] is not None}
 
     for e in entries:
-        lat, lng = e["lat"], e["lng"]
-        borrowed = None
-        if lat is None and e["twin_key"] in gps_by_twin:
-            borrowed = gps_by_twin[e["twin_key"]]
-        glat, glng = (lat, lng) if lat is not None else (borrowed or (None, None))
-
+        if e["forced"]:
+            e["showId"] = e["forced"][0]
+            continue
+        glat, glng = (e["lat"], e["lng"])
+        if glat is None and e["twin_key"] in gps_by_twin:
+            glat, glng = gps_by_twin[e["twin_key"]]
         assigned = None
         if glat is not None:
             near = min(shows, key=lambda s: miles(glat, glng, *venues[s[1]]))
@@ -119,18 +181,29 @@ def main():
             assigned = [s for s in shows if abs((s[2] - e["date"]).days) == best][-1]
         e["showId"] = assigned[0]
 
-    # resize derivatives
+    no_poster = []
     for e in entries:
-        out_dir = f"{REPO}/public/photos/{e['showId']}"
-        os.makedirs(out_dir, exist_ok=True)
-        for size, tag in ((THUMB_PX, "t"), (LIGHTBOX_PX, "l")):
-            out = f"{out_dir}/{e['stem']}_{tag}.jpg"
-            if not os.path.exists(out):
-                subprocess.run(
-                    ["sips", "-Z", str(size), "-s", "format", "jpeg",
-                     "-s", "formatOptions", "75", e["path"], "--out", out],
-                    capture_output=True, check=True,
-                )
+        photo_dir = f"{REPO}/public/photos/{e['showId']}"
+        os.makedirs(photo_dir, exist_ok=True)
+        thumb = f"{photo_dir}/{e['stem']}_t.jpg"
+        large = f"{photo_dir}/{e['stem']}_l.jpg"
+        if e["video"]:
+            video_dir = f"{REPO}/public/videos/{e['showId']}"
+            os.makedirs(video_dir, exist_ok=True)
+            dest = f"{video_dir}/{e['stem']}.mov"
+            if not os.path.exists(dest):
+                shutil.copy2(e["path"], dest)
+            if not (os.path.exists(thumb) and os.path.exists(large)):
+                if not poster_from_video(e["path"], large, thumb):
+                    no_poster.append(e["stem"])
+        else:
+            for size, out in ((THUMB_PX, thumb), (LIGHTBOX_PX, large)):
+                if not os.path.exists(out):
+                    subprocess.run(
+                        ["sips", "-Z", str(size), "-s", "format", "jpeg",
+                         "-s", "formatOptions", "75", e["path"], "--out", out],
+                        capture_output=True, check=True,
+                    )
 
     entries.sort(key=lambda e: e["taken"])
     lines = [
@@ -145,6 +218,8 @@ def main():
             f"showId: '{e['showId']}'",
             f"takenAt: '{e['taken']}'",
         ]
+        if e["video"]:
+            parts.append("kind: 'video'")
         if e["lat"] is not None:
             parts.append(f"lat: {e['lat']:.6f}")
             parts.append(f"lng: {e['lng']:.6f}")
@@ -158,12 +233,15 @@ def main():
         f.write("\n".join(lines))
 
     with_gps = sum(1 for e in entries if e["lat"] is not None)
-    print(f"imported {len(entries)} photos ({with_gps} with GPS) across "
-          f"{len({e['showId'] for e in entries})} shows")
+    n_video = sum(1 for e in entries if e["video"])
+    print(f"imported {len(entries)} files ({with_gps} with GPS, {n_video} videos) "
+          f"across {len({e['showId'] for e in entries})} shows")
     for s in shows:
         n = sum(1 for e in entries if e["showId"] == s[0])
         if n:
             print(f"  {s[2]}  {s[0]:28s} {n}")
+    if no_poster:
+        print("no poster frame for: " + ", ".join(no_poster))
     if skipped:
         print(f"skipped {len(skipped)}: " + ", ".join(skipped))
 

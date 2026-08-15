@@ -1,5 +1,7 @@
 node_modules
 dist
 *.tsbuildinfo
+# local-only media — .mov copies exceed remote file limits
+public/videos/
 *.local
 .DS_Store

@@ -36,6 +36,7 @@ export interface Photo {
   id: string;               // filename stem, e.g. "20140607-184425"
   showId: string;           // assigned show — GPS-verified when lat/lng present
   takenAt: string;          // ISO datetime from the camera timestamp
+  kind?: 'video';           // undefined = still photo; videos are local-only
   lat?: number;             // exact EXIF GPS, when the camera had a fix
   lng?: number;
   camera?: string;

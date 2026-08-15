@@ -110,6 +110,10 @@ export function photoLarge(p: Photo): string {
   return `/photos/${p.showId}/${p.id}_l.jpg`;
 }
 
+export function videoSrc(p: Photo): string {
+  return `/videos/${p.showId}/${p.id}.mov`;
+}
+
 export function photoAlt(p: Photo): string {
   const show = showById.get(p.showId);
   const venue = show ? venueById.get(show.venueId) : undefined;
@@ -117,41 +121,40 @@ export function photoAlt(p: Photo): string {
   return `Photo near ${where} — ${p.takenAt.slice(0, 10)}`;
 }
 
-/** GPS-tagged photos plotted at their exact coordinates, clustered when
- *  several were shot in the same spot (~1 km grid). */
-export interface PhotoMarker {
-  key: string;
+/** Every photo gets a map position: exact EXIF GPS when the camera had a
+ *  fix, otherwise its assigned show's venue. Clustering into tile stacks is
+ *  zoom-dependent and lives in MapCanvas. */
+export interface PhotoPoint {
+  photo: Photo;
   point: [number, number];
-  photos: Photo[];       // chronological
+  day: number;
   legId: string;
-  firstDay: number;
+  exact: boolean;        // true = real GPS, false = placed at the venue
 }
 
-export const photoMarkers: PhotoMarker[] = (() => {
-  const clusters = new Map<string, Photo[]>();
-  for (const p of photos) {
-    if (p.lat === undefined || p.lng === undefined) continue;
-    const key = `${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
-    const list = clusters.get(key) ?? [];
-    list.push(p);
-    clusters.set(key, list);
-  }
-  const markers: PhotoMarker[] = [];
-  for (const [key, list] of clusters) {
-    list.sort((a, b) => a.takenAt.localeCompare(b.takenAt));
-    const first = list[0];
-    const point = projectVenue({ lat: first.lat!, lng: first.lng! } as Venue);
-    if (!point) continue;
-    markers.push({
-      key,
+export const photoPoints: PhotoPoint[] = photos
+  .flatMap((photo): PhotoPoint[] => {
+    let point: [number, number] | null = null;
+    let exact = false;
+    if (photo.lat !== undefined && photo.lng !== undefined) {
+      point = projectVenue({ lat: photo.lat, lng: photo.lng } as Venue);
+      exact = point !== null;
+    }
+    if (!point) {
+      const show = showById.get(photo.showId);
+      const venue = show ? venueById.get(show.venueId) : undefined;
+      point = venue ? projectVenue(venue) : null;
+    }
+    if (!point) return [];
+    return [{
+      photo,
       point,
-      photos: list,
-      legId: showById.get(first.showId)?.legId ?? '',
-      firstDay: dayOf(first.takenAt.slice(0, 10)),
-    });
-  }
-  return markers.sort((a, b) => a.firstDay - b.firstDay);
-})();
+      day: dayOf(photo.takenAt.slice(0, 10)),
+      legId: showById.get(photo.showId)?.legId ?? '',
+      exact,
+    }];
+  })
+  .sort((a, b) => a.photo.takenAt.localeCompare(b.photo.takenAt));
 
 export const totals = {
   shows: shows.length,

@@ -6,12 +6,13 @@ import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zo
 import { merge, mesh } from 'topojson-client';
 import type { Topology, GeometryCollection, Polygon, MultiPolygon } from 'topojson-specification';
 import statesTopo from 'us-atlas/states-albers-10m.json';
+import countiesTopo from 'us-atlas/counties-albers-10m.json';
 import {
   legRoutes,
-  photoMarkers,
+  photoPoints,
   photoThumb,
   venueDots,
-  type PhotoMarker,
+  type PhotoPoint,
   type RouteSegment,
   type VenueDot,
 } from '../lib/derive';
@@ -31,7 +32,15 @@ function segmentProgress(seg: RouteSegment, day: number): number {
 
 type Hover =
   | { kind: 'venue'; dot: VenueDot; x: number; y: number }
-  | { kind: 'photo'; marker: PhotoMarker; x: number; y: number };
+  | { kind: 'photo'; photos: Photo[]; x: number; y: number };
+
+interface TileCluster {
+  key: string;
+  x: number;
+  y: number;
+  points: PhotoPoint[];  // chronological
+  rot: number;           // deterministic small rotation, hand-placed feel
+}
 
 export interface FlyRequest {
   venueId: string;
@@ -60,6 +69,17 @@ export function MapCanvas({
   const [t, setT] = useState<ZoomTransform>(zoomIdentity);
   const [hover, setHover] = useState<Hover | null>(null);
 
+  const countiesPath = useMemo(() => {
+    const t = countiesTopo as unknown as Topology<{ counties: GeometryCollection }>;
+    const kept: GeometryCollection = {
+      type: 'GeometryCollection',
+      geometries: t.objects.counties.geometries.filter(
+        (g) => !EXCLUDED_FIPS.has(String(g.id).slice(0, 2)),
+      ),
+    };
+    return geoPath()(mesh(t, kept, (a, b) => a !== b)) ?? '';
+  }, []);
+
   const { nationPath, statesPath, viewBox, vb, extent } = useMemo(() => {
     const path = geoPath(); // us-atlas geometry is preprojected — identity path
     const kept = topo.objects.states.geometries.filter(
@@ -86,7 +106,7 @@ export function MapCanvas({
     if (!svgRef.current) return;
     const svg = select(svgRef.current);
     const behavior = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([1, 9])
+      .scaleExtent([1, 64])
       .translateExtent(extent)
       .on('zoom', (event) => setT(event.transform));
     svg.call(behavior);
@@ -149,7 +169,34 @@ export function MapCanvas({
   };
 
   const k = t.k;
-  const dotR = 3.8 / Math.sqrt(k);
+  // k^0.8 keeps marks readable at street-level zoom without ballooning
+  const dotR = 3.8 / k ** 0.8;
+  const symbolStroke = 1.2 / k ** 0.8;
+
+  // zoom-dependent clustering: photos within ~56 screen px stack into one tile pile
+  const kq = Math.round(k * 4) / 4;
+  const clusters = useMemo<TileCluster[]>(() => {
+    const cell = 56 / kq;
+    const cells = new Map<string, PhotoPoint[]>();
+    for (const pp of photoPoints) {
+      if (pp.day > timeDays) continue;
+      const key = `${Math.round(pp.point[0] / cell)}:${Math.round(pp.point[1] / cell)}`;
+      const list = cells.get(key) ?? [];
+      list.push(pp);
+      cells.set(key, list);
+    }
+    return [...cells.entries()].map(([key, points]) => {
+      let h = 0;
+      for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) | 0;
+      return {
+        key,
+        x: points.reduce((s, p) => s + p.point[0], 0) / points.length,
+        y: points.reduce((s, p) => s + p.point[1], 0) / points.length,
+        points,
+        rot: (Math.abs(h) % 9) - 4,
+      };
+    });
+  }, [kq, timeDays]);
 
   return (
     <>
@@ -163,6 +210,12 @@ export function MapCanvas({
         <g transform={`translate(${t.x},${t.y}) scale(${k})`}>
           <path d={nationPath} className="map-nation" strokeWidth={1.1 / k} />
           <path d={statesPath} className="map-states" strokeWidth={0.6 / k} />
+          <path
+            d={countiesPath}
+            className="map-counties"
+            strokeWidth={0.35 / k}
+            style={{ opacity: k >= 4 ? 1 : 0 }}
+          />
 
           {legRoutes.map(({ leg, segments }) => (
             <g
@@ -189,36 +242,72 @@ export function MapCanvas({
             </g>
           ))}
 
-          {photoMarkers.map((marker) => {
-            if (marker.firstDay > timeDays) return null;
-            const active = activeLegIds.has(marker.legId);
-            const size = 4.6 / Math.sqrt(k);
+          {clusters.map((c) => {
+            const active = c.points.some((pp) => activeLegIds.has(pp.legId));
+            const list = c.points.map((pp) => pp.photo);
+            const w = 44 / k;
+            const behind = c.points.slice(1, 3);
+            const first = list[0];
             return (
               <g
-                key={marker.key}
-                className={active ? 'photo-marker' : 'photo-marker photo-marker--off'}
+                key={c.key}
+                className={active ? 'photo-tile' : 'photo-tile photo-tile--off'}
+                transform={`translate(${c.x},${c.y}) rotate(${c.rot})`}
                 role="button"
                 tabIndex={active ? 0 : -1}
-                aria-label={`${marker.photos.length} photo${marker.photos.length > 1 ? 's' : ''} taken here`}
-                onClick={() => onOpenPhotos(marker.photos, 0)}
+                aria-label={`${list.length} photo${list.length > 1 ? 's' : ''}, ${formatDate(first.takenAt.slice(0, 10))}`}
+                onClick={() => onOpenPhotos(list, 0)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    onOpenPhotos(marker.photos, 0);
+                    onOpenPhotos(list, 0);
                   }
                 }}
-                onMouseEnter={(e) => setHover({ kind: 'photo', marker, x: e.clientX, y: e.clientY })}
-                onMouseMove={(e) => setHover({ kind: 'photo', marker, x: e.clientX, y: e.clientY })}
+                onMouseEnter={(e) => setHover({ kind: 'photo', photos: list, x: e.clientX, y: e.clientY })}
+                onMouseMove={(e) => setHover({ kind: 'photo', photos: list, x: e.clientX, y: e.clientY })}
                 onMouseLeave={() => setHover(null)}
               >
-                <rect
-                  x={marker.point[0] - size / 2}
-                  y={marker.point[1] - size / 2}
-                  width={size}
-                  height={size}
-                  transform={`rotate(45 ${marker.point[0]} ${marker.point[1]})`}
-                  strokeWidth={1 / Math.sqrt(k)}
+                {behind
+                  .map((pp, i) => (
+                    <g
+                      key={pp.photo.id}
+                      transform={`translate(${((i + 1) * 5) / k},${((i + 1) * -4) / k}) rotate(${(i + 1) * 5})`}
+                    >
+                      <image
+                        href={photoThumb(pp.photo)}
+                        x={-w / 2}
+                        y={-w / 2}
+                        width={w}
+                        height={w}
+                        preserveAspectRatio="xMidYMid slice"
+                      />
+                      <rect x={-w / 2} y={-w / 2} width={w} height={w} className="tile-frame" strokeWidth={symbolStroke} />
+                    </g>
+                  ))
+                  .reverse()}
+                <image
+                  href={photoThumb(first)}
+                  x={-w / 2}
+                  y={-w / 2}
+                  width={w}
+                  height={w}
+                  preserveAspectRatio="xMidYMid slice"
                 />
+                <rect x={-w / 2} y={-w / 2} width={w} height={w} className="tile-frame" strokeWidth={symbolStroke} />
+                {first.kind === 'video' && (
+                  <path
+                    d={`M${-4 / k},${-6 / k} L${7 / k},0 L${-4 / k},${6 / k} Z`}
+                    className="tile-play"
+                  />
+                )}
+                {list.length > 1 && (
+                  <g transform={`translate(${w / 2},${-w / 2})`}>
+                    <circle r={7.5 / k} className="tile-count-bg" />
+                    <text className="tile-count" fontSize={8.5 / k} dy={3 / k} textAnchor="middle">
+                      {list.length}
+                    </text>
+                  </g>
+                )}
               </g>
             );
           })}
@@ -233,7 +322,7 @@ export function MapCanvas({
                   cx={dot.point[0]}
                   cy={dot.point[1]}
                   r={dotR * 2.6}
-                  strokeWidth={1.2 / Math.sqrt(k)}
+                  strokeWidth={symbolStroke}
                 />
               );
             })()}
@@ -269,7 +358,7 @@ export function MapCanvas({
                   r={dotR}
                   fill={unknown ? 'var(--ground)' : color}
                   stroke={unknown ? color : 'var(--ground)'}
-                  strokeWidth={(unknown ? 1 : 1.2) / Math.sqrt(k)}
+                  strokeWidth={symbolStroke}
                   strokeDasharray={unknown ? `${3 / k} ${2 / k}` : undefined}
                   className="dot-core"
                 />
@@ -310,16 +399,10 @@ export function MapCanvas({
       )}
 
       {hover && hover.kind === 'photo' && (
-        <div className="tooltip tooltip--photo" style={{ left: hover.x, top: hover.y }}>
-          <img
-            src={photoThumb(hover.marker.photos[0])}
-            alt=""
-            className="tooltip-thumb"
-            loading="lazy"
-          />
+        <div className="tooltip" style={{ left: hover.x, top: hover.y }}>
           <div className="tooltip-date">
-            {formatDate(hover.marker.photos[0].takenAt.slice(0, 10))}
-            {hover.marker.photos.length > 1 && ` · ${hover.marker.photos.length} photos`}
+            {formatDate(hover.photos[0].takenAt.slice(0, 10))}
+            {hover.photos.length > 1 && ` · ${hover.photos.length} items`}
           </div>
         </div>
       )}
