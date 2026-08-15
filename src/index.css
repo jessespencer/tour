@@ -805,6 +805,22 @@ body {
   transition: opacity 0.4s;
 }
 
+.map-streets {
+  pointer-events: none;
+}
+
+.street-minor {
+  fill: none;
+  stroke: rgba(233, 234, 228, 0.07);
+  stroke-linecap: round;
+}
+
+.street-major {
+  fill: none;
+  stroke: rgba(233, 234, 228, 0.14);
+  stroke-linecap: round;
+}
+
 .photo-tile {
   outline: none;
   cursor: pointer;

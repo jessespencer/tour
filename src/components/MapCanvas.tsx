@@ -17,7 +17,64 @@ import {
   type VenueDot,
 } from '../lib/derive';
 import { formatDate } from '../lib/format';
+import { projection } from '../lib/geo';
 import type { Photo } from '../types';
+
+interface StreetBucket {
+  key: string;
+  d: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface StreetLayers {
+  major: StreetBucket[];
+  minor: StreetBucket[];
+}
+
+const STREETS_PREFETCH_K = 5; // start loading once the user commits to zooming
+const STREETS_MAJOR_K = 14;
+const STREETS_MINOR_K = 32;
+
+/** Group projected street polylines into ~10 km spatial buckets so only
+ *  buckets intersecting the viewport are rendered. */
+function buildStreetBuckets(lines: [number, number][][], tier: string): StreetBucket[] {
+  const CELL = 2; // viewBox units ≈ 10 km
+  const cells = new Map<string, { d: string; x0: number; y0: number; x1: number; y1: number }>();
+  for (const line of lines) {
+    let d = '';
+    let first = true;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const pt of line) {
+      const p = projection(pt);
+      if (!p) {
+        first = true;
+        continue;
+      }
+      d += `${first ? 'M' : 'L'}${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+      first = false;
+      if (p[0] < x0) x0 = p[0];
+      if (p[1] < y0) y0 = p[1];
+      if (p[0] > x1) x1 = p[0];
+      if (p[1] > y1) y1 = p[1];
+    }
+    if (!d) continue;
+    const key = `${tier}:${Math.round(x0 / CELL)}:${Math.round(y0 / CELL)}`;
+    const cell = cells.get(key);
+    if (cell) {
+      cell.d += d;
+      cell.x0 = Math.min(cell.x0, x0);
+      cell.y0 = Math.min(cell.y0, y0);
+      cell.x1 = Math.max(cell.x1, x1);
+      cell.y1 = Math.max(cell.y1, y1);
+    } else {
+      cells.set(key, { d, x0, y0, x1, y1 });
+    }
+  }
+  return [...cells.entries()].map(([key, c]) => ({ key, ...c }));
+}
 
 const topo = statesTopo as unknown as Topology<{ states: GeometryCollection; nation: GeometryCollection }>;
 
@@ -68,6 +125,8 @@ export function MapCanvas({
   const behaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [t, setT] = useState<ZoomTransform>(zoomIdentity);
   const [hover, setHover] = useState<Hover | null>(null);
+  const [streets, setStreets] = useState<StreetLayers | null>(null);
+  const streetsRequested = useRef(false);
 
   const countiesPath = useMemo(() => {
     const t = countiesTopo as unknown as Topology<{ counties: GeometryCollection }>;
@@ -106,7 +165,7 @@ export function MapCanvas({
     if (!svgRef.current) return;
     const svg = select(svgRef.current);
     const behavior = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([1, 64])
+      .scaleExtent([1, 2400])
       .translateExtent(extent)
       .on('zoom', (event) => setT(event.transform));
     svg.call(behavior);
@@ -168,6 +227,21 @@ export function MapCanvas({
     }
   };
 
+  useEffect(() => {
+    if (t.k < STREETS_PREFETCH_K || streetsRequested.current) return;
+    streetsRequested.current = true;
+    fetch('/streets.json')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { major: [number, number][][]; minor: [number, number][][] } | null) => {
+        if (!data) return;
+        setStreets({
+          major: buildStreetBuckets(data.major, 'M'),
+          minor: buildStreetBuckets(data.minor, 'm'),
+        });
+      })
+      .catch(() => {}); // streets.json absent — the layer just never appears
+  }, [t.k]);
+
   const k = t.k;
   // k^0.8 keeps marks readable at street-level zoom without ballooning
   const dotR = 3.8 / k ** 0.8;
@@ -214,8 +288,28 @@ export function MapCanvas({
             d={countiesPath}
             className="map-counties"
             strokeWidth={0.35 / k}
-            style={{ opacity: k >= 4 ? 1 : 0 }}
+            style={{ opacity: k >= 4 && k < STREETS_MINOR_K ? 1 : 0 }}
           />
+
+          {streets && k >= STREETS_MAJOR_K && (() => {
+            const vx0 = (vb.x - t.x) / k;
+            const vy0 = (vb.y - t.y) / k;
+            const vx1 = vx0 + vb.w / k;
+            const vy1 = vy0 + vb.h / k;
+            const visible = (b: StreetBucket) =>
+              b.x1 >= vx0 && b.x0 <= vx1 && b.y1 >= vy0 && b.y0 <= vy1;
+            return (
+              <g className="map-streets">
+                {k >= STREETS_MINOR_K &&
+                  streets.minor.filter(visible).map((b) => (
+                    <path key={b.key} d={b.d} className="street-minor" strokeWidth={0.7 / k} />
+                  ))}
+                {streets.major.filter(visible).map((b) => (
+                  <path key={b.key} d={b.d} className="street-major" strokeWidth={1.1 / k} />
+                ))}
+              </g>
+            );
+          })()}
 
           {legRoutes.map(({ leg, segments }) => (
             <g

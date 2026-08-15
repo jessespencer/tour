@@ -45,6 +45,19 @@ That directory is **gitignored** (files exceed remote size limits) — videos
 exist only on machines that have run the import script. A clone without them
 still works; video tiles just 404 on play.
 
+## Streets
+
+`public/streets.json` (committed) holds OSM street centerlines within ~2 km
+of every venue and GPS photo spot, extracted once by:
+
+```sh
+python3 scripts/import-streets.py
+```
+
+The map fetches it lazily past ~5× zoom and draws street grids that fade in
+around the tour stops — major roads at 14×, full grids at 32×. Rerun the
+script after adding venues. Street data © OpenStreetMap contributors (ODbL).
+
 ## Deploy
 
 Target is Cloudflare Pages serving `dist/` from root. The site ships
