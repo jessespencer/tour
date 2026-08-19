@@ -39,7 +39,28 @@ function useOdometer(target: number): number {
   return reducedMotion ? target : display;
 }
 
+/** Pinch-zoom outside the SVG (or via Safari gesture events, which d3-zoom
+ *  never sees) triggers browser page zoom and scrolls the chrome off-screen —
+ *  swallow it app-wide. Cmd+/- browser zoom still works. */
+function usePageZoomGuard() {
+  useEffect(() => {
+    const wheel = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault();
+    };
+    const gesture = (e: Event) => e.preventDefault();
+    window.addEventListener('wheel', wheel, { passive: false });
+    window.addEventListener('gesturestart', gesture);
+    window.addEventListener('gesturechange', gesture);
+    return () => {
+      window.removeEventListener('wheel', wheel);
+      window.removeEventListener('gesturestart', gesture);
+      window.removeEventListener('gesturechange', gesture);
+    };
+  }, []);
+}
+
 export function App() {
+  usePageZoomGuard();
   // Highlight semantics: empty selection = no focus, every leg fully lit.
   const [selectedLegIds, setSelectedLegIds] = useState<Set<string>>(() => new Set());
   const [timeDays, setTimeDays] = useState(TOTAL_DAYS);

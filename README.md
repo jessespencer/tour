@@ -47,16 +47,20 @@ still works; video tiles just 404 on play.
 
 ## Streets
 
-`public/streets.json` (committed) holds OSM street centerlines within ~2 km
-of every venue and GPS photo spot, extracted once by:
+`public/streets/` (committed) holds OSM street centerlines around every venue
+and GPS photo spot — the full grid down to residential within ~3 km (2 km for
+photo spots), arterials only out to ~10 km (6 km) — extracted once by:
 
 ```sh
 python3 scripts/import-streets.py
 ```
 
-The map fetches it lazily past ~5× zoom and draws street grids that fade in
-around the tour stops — major roads at 14×, full grids at 32×. Rerun the
-script after adding venues. Street data © OpenStreetMap contributors (ODbL).
+Data is chunked into ~0.5° regional files plus an `index.json` of chunk
+bounds and per-spot fade radii. The map fetches the index past ~5× zoom,
+pulls only chunks near the viewport past ~10×, and draws street grids that
+fade in around the tour stops — major roads at 14×, full grids at 32× — with
+radial masks softening each patch edge. Rerun the script after adding
+venues. Street data © OpenStreetMap contributors (ODbL).
 
 ## Deploy
 

@@ -23,6 +23,7 @@ import type { Photo } from '../types';
 interface StreetBucket {
   key: string;
   d: string;
+  alpha: number; // edge-fade level baked in at load time
   x0: number;
   y0: number;
   x1: number;
@@ -34,25 +35,72 @@ interface StreetLayers {
   minor: StreetBucket[];
 }
 
-const STREETS_PREFETCH_K = 5; // start loading once the user commits to zooming
+const STREETS_INDEX_K = 5; // fetch the tiny chunk index once the user commits to zooming
+const STREETS_FETCH_K = 10; // start pulling street chunks near the viewport
 const STREETS_MAJOR_K = 14;
-const STREETS_MINOR_K = 32;
+const STREETS_MINOR_K = 28;
+
+interface StreetSpot {
+  x: number;
+  y: number;
+  rNear: number; // full residential grid extent, viewBox units
+  rFar: number; // arterials-only extent
+}
+
+interface StreetChunkMeta {
+  id: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+interface StreetsIndex {
+  spots: StreetSpot[];
+  chunks: StreetChunkMeta[];
+}
+
+/** Deterministic 0–1 hash from a coordinate — used to dissolve street edges. */
+function hash01(x: number, y: number): number {
+  const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+/** Edge falloff: full strength through 55% of a spot's radius, then a long
+ *  smoothstep that reaches ~0.1 at the actual data edge so the boundary
+ *  dissolves instead of cutting. t = distance / spot radius. */
+function fadeAlpha(t: number): number {
+  if (t <= 0.55) return 1;
+  if (t >= 1.1) return 0;
+  const u = (t - 0.55) / 0.55;
+  return 1 - u * u * (3 - 2 * u);
+}
 
 /** Group projected street polylines into ~10 km spatial buckets so only
- *  buckets intersecting the viewport are rendered. */
-function buildStreetBuckets(lines: [number, number][][], tier: string): StreetBucket[] {
+ *  buckets intersecting the viewport are rendered. Each way gets an edge-fade
+ *  alpha from its distance to the nearest tour spot (quantized into bands so
+ *  ways sharing a cell+band merge into one path); ways near the edge are also
+ *  probabilistically dropped, which reads as a feathered dissolve. */
+function buildStreetBuckets(
+  lines: [number, number][][],
+  tier: 'major' | 'minor',
+  keyPrefix: string,
+  spots: StreetSpot[],
+): StreetBucket[] {
   const CELL = 2; // viewBox units ≈ 10 km
-  const cells = new Map<string, { d: string; x0: number; y0: number; x1: number; y1: number }>();
+  const cells = new Map<string, { d: string; alpha: number; x0: number; y0: number; x1: number; y1: number }>();
   for (const line of lines) {
     let d = '';
     let first = true;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    const projected: [number, number][] = [];
     for (const pt of line) {
       const p = projection(pt);
       if (!p) {
         first = true;
         continue;
       }
+      projected.push(p);
       d += `${first ? 'M' : 'L'}${p[0].toFixed(4)},${p[1].toFixed(4)}`;
       first = false;
       if (p[0] < x0) x0 = p[0];
@@ -61,7 +109,21 @@ function buildStreetBuckets(lines: [number, number][][], tier: string): StreetBu
       if (p[1] > y1) y1 = p[1];
     }
     if (!d) continue;
-    const key = `${tier}:${Math.round(x0 / CELL)}:${Math.round(y0 / CELL)}`;
+
+    const [mx, my] = projected[projected.length >> 1];
+    let t = Infinity;
+    for (const s of spots) {
+      const r = tier === 'major' ? s.rFar : s.rNear;
+      if (r <= 0) continue;
+      const rel = Math.hypot(mx - s.x, my - s.y) / r;
+      if (rel < t) t = rel;
+    }
+    const alpha = fadeAlpha(t);
+    if (alpha <= 0) continue;
+    if (hash01(mx, my) > Math.min(1, alpha * 1.8 + 0.05)) continue; // dissolve
+    const qa = Math.ceil(alpha * 5) / 5; // 5 opacity bands
+
+    const key = `${keyPrefix}:${Math.round(x0 / CELL)}:${Math.round(y0 / CELL)}:${qa}`;
     const cell = cells.get(key);
     if (cell) {
       cell.d += d;
@@ -70,7 +132,7 @@ function buildStreetBuckets(lines: [number, number][][], tier: string): StreetBu
       cell.x1 = Math.max(cell.x1, x1);
       cell.y1 = Math.max(cell.y1, y1);
     } else {
-      cells.set(key, { d, x0, y0, x1, y1 });
+      cells.set(key, { d, alpha: qa, x0, y0, x1, y1 });
     }
   }
   return [...cells.entries()].map(([key, c]) => ({ key, ...c }));
@@ -125,8 +187,10 @@ export function MapCanvas({
   const behaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [t, setT] = useState<ZoomTransform>(zoomIdentity);
   const [hover, setHover] = useState<Hover | null>(null);
-  const [streets, setStreets] = useState<StreetLayers | null>(null);
-  const streetsRequested = useRef(false);
+  const [streetsIndex, setStreetsIndex] = useState<StreetsIndex | null>(null);
+  const [chunkLayers, setChunkLayers] = useState<Record<string, StreetLayers>>({});
+  const indexRequested = useRef(false);
+  const chunksRequested = useRef<Set<string>>(new Set());
 
   const countiesPath = useMemo(() => {
     const t = countiesTopo as unknown as Topology<{ counties: GeometryCollection }>;
@@ -228,27 +292,92 @@ export function MapCanvas({
   };
 
   useEffect(() => {
-    if (t.k < STREETS_PREFETCH_K || streetsRequested.current) return;
-    streetsRequested.current = true;
-    fetch('/streets.json')
+    if (t.k < STREETS_INDEX_K || indexRequested.current) return;
+    indexRequested.current = true;
+    fetch('/streets/index.json')
       .then((r) => (r.ok ? r.json() : null))
-      .then((data: { major: [number, number][][]; minor: [number, number][][] } | null) => {
-        if (!data) return;
-        setStreets({
-          major: buildStreetBuckets(data.major, 'M'),
-          minor: buildStreetBuckets(data.minor, 'm'),
-        });
-      })
-      .catch(() => {}); // streets.json absent — the layer just never appears
+      .then(
+        (data: {
+          spots: [number, number, number, number][]; // lng, lat, near m, far m
+          chunks: { id: string; b: [number, number, number, number] }[]; // lon/lat bounds
+        } | null) => {
+          if (!data) return;
+          const metersToUnits = (lng: number, lat: number, m: number) => {
+            const p0 = projection([lng, lat]);
+            const p1 = projection([lng, lat + m / 111320]);
+            return p0 && p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) : 0;
+          };
+          const spots = data.spots.flatMap(([lng, lat, near, far]) => {
+            const p = projection([lng, lat]);
+            if (!p) return [];
+            return [{
+              x: p[0],
+              y: p[1],
+              rNear: metersToUnits(lng, lat, near),
+              rFar: metersToUnits(lng, lat, far),
+            }];
+          });
+          const chunks = data.chunks.flatMap(({ id, b }) => {
+            const corners = (
+              [[b[0], b[1]], [b[0], b[3]], [b[2], b[1]], [b[2], b[3]]] as [number, number][]
+            )
+              .map((c) => projection(c))
+              .filter((p): p is [number, number] => p !== null);
+            if (corners.length === 0) return [];
+            const pad = 0.5; // conic curvature can bow edges past the corner box
+            return [{
+              id,
+              x0: Math.min(...corners.map((c) => c[0])) - pad,
+              y0: Math.min(...corners.map((c) => c[1])) - pad,
+              x1: Math.max(...corners.map((c) => c[0])) + pad,
+              y1: Math.max(...corners.map((c) => c[1])) + pad,
+            }];
+          });
+          setStreetsIndex({ spots, chunks });
+        },
+      )
+      .catch(() => {}); // streets data absent — the layer just never appears
   }, [t.k]);
+
+  // Pull only chunk files whose bounds land within half a viewport of the view.
+  useEffect(() => {
+    if (!streetsIndex || t.k < STREETS_FETCH_K) return;
+    const vx0 = (vb.x - t.x) / t.k;
+    const vy0 = (vb.y - t.y) / t.k;
+    const vw = vb.w / t.k;
+    const vh = vb.h / t.k;
+    const mx = vw / 2;
+    const my = vh / 2;
+    for (const c of streetsIndex.chunks) {
+      if (c.x1 < vx0 - mx || c.x0 > vx0 + vw + mx || c.y1 < vy0 - my || c.y0 > vy0 + vh + my) {
+        continue;
+      }
+      if (chunksRequested.current.has(c.id)) continue;
+      chunksRequested.current.add(c.id);
+      fetch(`/streets/${c.id}.json`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: { major: [number, number][][]; minor: [number, number][][] } | null) => {
+          if (!data) return;
+          const layers = {
+            major: buildStreetBuckets(data.major, 'major', `M${c.id}`, streetsIndex.spots),
+            minor: buildStreetBuckets(data.minor, 'minor', `m${c.id}`, streetsIndex.spots),
+          };
+          setChunkLayers((prev) => ({ ...prev, [c.id]: layers }));
+        })
+        .catch(() => {});
+    }
+  }, [t, streetsIndex, vb]);
 
   const k = t.k;
   // k^0.8 keeps marks readable at street-level zoom without ballooning
   const dotR = 3.8 / k ** 0.8;
   const symbolStroke = 1.2 / k ** 0.8;
 
-  // zoom-dependent clustering: photos within ~56 screen px stack into one tile pile
-  const kq = Math.round(k * 4) / 4;
+  // zoom-dependent clustering: photos within ~56 screen px stack into one tile
+  // pile. Regroup only at half-octave zoom steps, and key clusters by their
+  // lead photo (not the grid cell) so unchanged piles keep their DOM nodes —
+  // cell-derived keys remounted every <image> on each regroup and flickered.
+  const kq = 2 ** (Math.round(Math.log2(k) * 2) / 2);
   const clusters = useMemo<TileCluster[]>(() => {
     const cell = 56 / kq;
     const cells = new Map<string, PhotoPoint[]>();
@@ -259,11 +388,12 @@ export function MapCanvas({
       list.push(pp);
       cells.set(key, list);
     }
-    return [...cells.entries()].map(([key, points]) => {
+    return [...cells.values()].map((points) => {
+      const lead = points[0].photo.id;
       let h = 0;
-      for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) | 0;
+      for (const ch of lead) h = (h * 31 + ch.charCodeAt(0)) | 0;
       return {
-        key,
+        key: `${lead}:${points.length}`,
         x: points.reduce((s, p) => s + p.point[0], 0) / points.length,
         y: points.reduce((s, p) => s + p.point[1], 0) / points.length,
         points,
@@ -288,25 +418,45 @@ export function MapCanvas({
             d={countiesPath}
             className="map-counties"
             strokeWidth={0.35 / k}
-            style={{ opacity: k >= 4 && k < STREETS_MINOR_K ? 1 : 0 }}
+            style={{ opacity: Math.min(1, Math.max(0, (k - 3) / 2)) }}
           />
 
-          {streets && k >= STREETS_MAJOR_K && (() => {
+          {streetsIndex && k > STREETS_MAJOR_K && (() => {
             const vx0 = (vb.x - t.x) / k;
             const vy0 = (vb.y - t.y) / k;
             const vx1 = vx0 + vb.w / k;
             const vy1 = vy0 + vb.h / k;
             const visible = (b: StreetBucket) =>
               b.x1 >= vx0 && b.x0 <= vx1 && b.y1 >= vy0 && b.y0 <= vy1;
+            const loaded = Object.values(chunkLayers);
+            // Tiers ease in over a few zoom levels instead of popping at a threshold.
+            const majorRamp = Math.min(1, (k - STREETS_MAJOR_K) / 6);
+            const minorRamp = Math.min(1, Math.max(0, (k - STREETS_MINOR_K) / 10));
             return (
               <g className="map-streets">
-                {k >= STREETS_MINOR_K &&
-                  streets.minor.filter(visible).map((b) => (
-                    <path key={b.key} d={b.d} className="street-minor" strokeWidth={0.7 / k} />
-                  ))}
-                {streets.major.filter(visible).map((b) => (
-                  <path key={b.key} d={b.d} className="street-major" strokeWidth={1.1 / k} />
-                ))}
+                {minorRamp > 0 &&
+                  loaded.flatMap((l) =>
+                    l.minor.filter(visible).map((b) => (
+                      <path
+                        key={b.key}
+                        d={b.d}
+                        className="street-minor"
+                        strokeWidth={0.7 / k}
+                        strokeOpacity={b.alpha * minorRamp}
+                      />
+                    )),
+                  )}
+                {loaded.flatMap((l) =>
+                  l.major.filter(visible).map((b) => (
+                    <path
+                      key={b.key}
+                      d={b.d}
+                      className="street-major"
+                      strokeWidth={1.1 / k}
+                      strokeOpacity={b.alpha * majorRamp}
+                    />
+                  )),
+                )}
               </g>
             );
           })()}
@@ -317,7 +467,10 @@ export function MapCanvas({
               className={activeLegIds.has(leg.id) ? 'leg-route' : 'leg-route leg-route--off'}
               stroke={leg.color}
               strokeWidth={1.8 / k}
-              style={{ filter: `drop-shadow(0 0 ${3 / k}px ${leg.color}66)` }}
+              // The glow filter forces an offscreen surface scaled by k — past
+              // ~8x it's sub-pixel anyway, and at street zoom the giant surface
+              // glitches (dark wedge artifacts) and re-rasters every frame.
+              style={k < 8 ? { filter: `drop-shadow(0 0 ${3 / k}px ${leg.color}66)` } : undefined}
             >
               {segments.map((seg, i) => {
                 if (!seg.path) return null;

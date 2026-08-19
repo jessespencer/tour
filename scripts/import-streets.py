@@ -1,16 +1,26 @@
 #!/usr/bin/env python3
 """Extract OSM streets around every venue and GPS photo spot via Overpass.
 
-One-time build step (like geocoding): downloads street centerlines within
-~2 km of each venue (1.5 km of standalone photo GPS spots), dedupes ways,
-and writes public/streets.json as lon/lat polylines in two tiers:
+One-time build step (like geocoding): downloads street centerlines in two
+rings around each spot —
 
-  major — motorway/trunk/primary/secondary (+links)
-  minor — tertiary/residential/unclassified
+  near ring (venue 3 km / photo 2 km) — every drivable class down to
+      residential/living_street
+  far ring  (venue 10 km / photo 6 km) — arterials only
+      (motorway/trunk/primary/secondary/tertiary + links)
 
-The app fetches this lazily at deep zoom and projects it through the same
-Albers projection as everything else. No runtime API calls, no keys —
-rerun this script only when venues are added.
+so the residential grid fades out into a still-present arterial network
+instead of a hard cutoff. Ways are deduped and written as lon/lat polylines
+under public/streets/ in ~0.5° regional chunks:
+
+  public/streets/index.json   — chunk ids + lon/lat bounds, plus every spot's
+                                center and fade radius (the app masks street
+                                edges with radial fades built from these)
+  public/streets/<id>.json    — {major, minor} polylines for one chunk
+
+The app fetches the index at moderate zoom and pulls only chunks near the
+viewport at street zoom. No runtime API calls, no keys — rerun this script
+only when venues are added.
 
 Usage: python3 scripts/import-streets.py
 """
@@ -19,19 +29,30 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
 import time
+import urllib.parse
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OVERPASS = "https://overpass-api.de/api/interpreter"
 
-RADIUS_VENUE = 2000
-RADIUS_PHOTO = 1500
-BATCH = 6
-HIGHWAY_RE = (
+NEAR_VENUE = 3000
+NEAR_PHOTO = 2000
+FAR_VENUE = 10000
+FAR_PHOTO = 6000
+BATCH = 4
+CELL_DEG = 0.5
+
+NEAR_RE = (
     "motorway|motorway_link|trunk|trunk_link|primary|primary_link|"
-    "secondary|secondary_link|tertiary|residential|unclassified"
+    "secondary|secondary_link|tertiary|tertiary_link|residential|"
+    "unclassified|living_street"
+)
+FAR_RE = (
+    "motorway|motorway_link|trunk|trunk_link|primary|primary_link|"
+    "secondary|secondary_link|tertiary|tertiary_link"
 )
 MAJOR = {
     "motorway", "motorway_link", "trunk", "trunk_link",
@@ -53,9 +74,9 @@ def miles(a, b, c, d):
 
 
 def main():
-    spots = []  # (lat, lng, radius)
+    spots = []  # (lat, lng, near_r, far_r)
     for m in re.finditer(r"lat: ([-\d.]+),\s*lng: ([-\d.]+)", read(f"{REPO}/src/data/venues.ts")):
-        spots.append((float(m.group(1)), float(m.group(2)), RADIUS_VENUE))
+        spots.append((float(m.group(1)), float(m.group(2)), NEAR_VENUE, FAR_VENUE))
     n_venues = len(spots)
 
     photos_ts = f"{REPO}/src/data/photos.ts"
@@ -63,32 +84,33 @@ def main():
         for m in re.finditer(r"lat: ([-\d.]+), lng: ([-\d.]+)", read(photos_ts)):
             lat, lng = float(m.group(1)), float(m.group(2))
             if all(miles(lat, lng, s[0], s[1]) > 0.9 for s in spots):
-                spots.append((lat, lng, RADIUS_PHOTO))
+                spots.append((lat, lng, NEAR_PHOTO, FAR_PHOTO))
     print(f"{n_venues} venues + {len(spots) - n_venues} standalone photo spots")
 
     ways = {}  # id -> (tier, [[lng,lat], ...])
     for i in range(0, len(spots), BATCH):
         batch = spots[i:i + BATCH]
         clauses = "".join(
-            f'way["highway"~"^({HIGHWAY_RE})$"](around:{r},{lat:.5f},{lng:.5f});'
-            for lat, lng, r in batch
+            f'way["highway"~"^({NEAR_RE})$"](around:{nr},{lat:.5f},{lng:.5f});'
+            f'way["highway"~"^({FAR_RE})$"](around:{fr},{lat:.5f},{lng:.5f});'
+            for lat, lng, nr, fr in batch
         )
-        query = f"[out:json][timeout:180];({clauses});out geom;"
+        query = f"[out:json][timeout:300];({clauses});out geom;"
         req = urllib.request.Request(
             OVERPASS,
             data=("data=" + urllib.parse.quote(query)).encode(),
             headers={"User-Agent": "tour-archive-street-import (personal project)"},
         )
-        for attempt in range(3):
+        for attempt in range(4):
             try:
-                with urllib.request.urlopen(req, timeout=240) as resp:
+                with urllib.request.urlopen(req, timeout=360) as resp:
                     data = json.load(resp)
                 break
             except Exception as e:
-                if attempt == 2:
+                if attempt == 3:
                     sys.exit(f"overpass failed on batch {i // BATCH + 1}: {e}")
                 print(f"  retry batch {i // BATCH + 1} ({e})")
-                time.sleep(15)
+                time.sleep(20)
         for el in data.get("elements", []):
             if el.get("type") != "way" or "geometry" not in el:
                 continue
@@ -96,18 +118,48 @@ def main():
             tier = "major" if hw in MAJOR else "minor"
             ways[el["id"]] = (tier, [[round(g["lon"], 5), round(g["lat"], 5)] for g in el["geometry"]])
         print(f"  batch {i // BATCH + 1}/{(len(spots) + BATCH - 1) // BATCH}: {len(ways)} ways total")
-        time.sleep(2)
+        time.sleep(3)
 
-    out = {"major": [], "minor": []}
+    # Bucket ways into ~0.5° regional chunks keyed by their first coordinate.
+    chunks = {}  # id -> {"major": [...], "minor": [...], "bounds": [minLng,minLat,maxLng,maxLat]}
     for tier, coords in ways.values():
-        out[tier].append(coords)
-    dest = f"{REPO}/public/streets.json"
-    with open(dest, "w") as f:
-        json.dump(out, f, separators=(",", ":"))
-    size_mb = os.path.getsize(dest) / 1e6
-    n_pts = sum(len(c) for t in out.values() for c in t)
-    print(f"wrote {dest}: {len(out['major'])} major + {len(out['minor'])} minor ways, "
-          f"{n_pts} points, {size_mb:.1f} MB")
+        lng0, lat0 = coords[0]
+        cid = f"{math.floor(lng0 / CELL_DEG)}_{math.floor(lat0 / CELL_DEG)}"
+        c = chunks.setdefault(cid, {"major": [], "minor": [], "bounds": [180, 90, -180, -90]})
+        c[tier].append(coords)
+        b = c["bounds"]
+        for lng, lat in coords:
+            if lng < b[0]: b[0] = lng
+            if lat < b[1]: b[1] = lat
+            if lng > b[2]: b[2] = lng
+            if lat > b[3]: b[3] = lat
+
+    out_dir = f"{REPO}/public/streets"
+    shutil.rmtree(out_dir, ignore_errors=True)
+    os.makedirs(out_dir)
+    total = 0
+    for cid, c in chunks.items():
+        path = f"{out_dir}/{cid}.json"
+        with open(path, "w") as f:
+            json.dump({"major": c["major"], "minor": c["minor"]}, f, separators=(",", ":"))
+        total += os.path.getsize(path)
+
+    index = {
+        "chunks": [{"id": cid, "b": c["bounds"]} for cid, c in chunks.items()],
+        # spot centers + near/far radii (meters) — the app builds edge-fade masks
+        # from these: minor streets fade at the near ring, arterials at the far
+        "spots": [[round(lng, 5), round(lat, 5), nr, fr] for lat, lng, nr, fr in spots],
+    }
+    with open(f"{out_dir}/index.json", "w") as f:
+        json.dump(index, f, separators=(",", ":"))
+
+    legacy = f"{REPO}/public/streets.json"
+    if os.path.exists(legacy):
+        os.remove(legacy)
+
+    n_pts = sum(len(coords) for _t, coords in ways.values())
+    print(f"wrote {out_dir}: {len(chunks)} chunks, {len(ways)} ways, {n_pts} points, "
+          f"{total / 1e6:.1f} MB total")
 
 
 if __name__ == "__main__":
