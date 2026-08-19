@@ -47,20 +47,22 @@ still works; video tiles just 404 on play.
 
 ## Streets
 
-`public/streets/` (committed) holds OSM street centerlines around every venue
-and GPS photo spot — the full grid down to residential within ~3 km (2 km for
-photo spots), arterials only out to ~10 km (6 km) — extracted once by:
+`public/streets/` (committed) holds OSM data around every venue and GPS
+photo spot in three rings — the full street grid down to residential within
+~3 km (2 km for photo spots), arterials only out to ~10 km (6 km), and
+building footprints within ~1 km (600 m) — extracted once by:
 
 ```sh
 python3 scripts/import-streets.py
 ```
 
-Data is chunked into ~0.5° regional files plus an `index.json` of chunk
-bounds and per-spot fade radii. The map fetches the index past ~5× zoom,
-pulls only chunks near the viewport past ~10×, and draws street grids that
-fade in around the tour stops — major roads at 14×, full grids at 32× — with
-radial masks softening each patch edge. Rerun the script after adding
-venues. Street data © OpenStreetMap contributors (ODbL).
+Street ways keep their OSM `name` tag. Data is chunked into ~0.5° regional
+files plus an `index.json` of chunk bounds and per-spot fade radii. The map
+fetches the index past ~5× zoom, pulls only chunks near the viewport past
+~10×, and eases layers in around the tour stops — major roads ~14×, full
+grids ~28×, street names ~56×, footprints ~110×, up to a ~600 m viewport at
+max zoom. Each layer's edge fades and dissolves at its own ring. Rerun the
+script after adding venues. Data © OpenStreetMap contributors (ODbL).
 
 ## Deploy
 

@@ -42,7 +42,9 @@ NEAR_VENUE = 3000
 NEAR_PHOTO = 2000
 FAR_VENUE = 10000
 FAR_PHOTO = 6000
-BATCH = 4
+BLDG_VENUE = 1000  # building footprints — tight ring, they're heavy
+BLDG_PHOTO = 600
+BATCH = 3
 CELL_DEG = 0.5
 
 NEAR_RE = (
@@ -74,9 +76,9 @@ def miles(a, b, c, d):
 
 
 def main():
-    spots = []  # (lat, lng, near_r, far_r)
+    spots = []  # (lat, lng, near_r, far_r, bldg_r)
     for m in re.finditer(r"lat: ([-\d.]+),\s*lng: ([-\d.]+)", read(f"{REPO}/src/data/venues.ts")):
-        spots.append((float(m.group(1)), float(m.group(2)), NEAR_VENUE, FAR_VENUE))
+        spots.append((float(m.group(1)), float(m.group(2)), NEAR_VENUE, FAR_VENUE, BLDG_VENUE))
     n_venues = len(spots)
 
     photos_ts = f"{REPO}/src/data/photos.ts"
@@ -84,16 +86,18 @@ def main():
         for m in re.finditer(r"lat: ([-\d.]+), lng: ([-\d.]+)", read(photos_ts)):
             lat, lng = float(m.group(1)), float(m.group(2))
             if all(miles(lat, lng, s[0], s[1]) > 0.9 for s in spots):
-                spots.append((lat, lng, NEAR_PHOTO, FAR_PHOTO))
+                spots.append((lat, lng, NEAR_PHOTO, FAR_PHOTO, BLDG_PHOTO))
     print(f"{n_venues} venues + {len(spots) - n_venues} standalone photo spots")
 
-    ways = {}  # id -> (tier, [[lng,lat], ...])
+    ways = {}  # id -> (tier, name|None, [[lng,lat], ...])
+    bldgs = {}  # id -> [[lng,lat], ...] footprint ring
     for i in range(0, len(spots), BATCH):
         batch = spots[i:i + BATCH]
         clauses = "".join(
             f'way["highway"~"^({NEAR_RE})$"](around:{nr},{lat:.5f},{lng:.5f});'
             f'way["highway"~"^({FAR_RE})$"](around:{fr},{lat:.5f},{lng:.5f});'
-            for lat, lng, nr, fr in batch
+            f'way["building"](around:{br},{lat:.5f},{lng:.5f});'
+            for lat, lng, nr, fr, br in batch
         )
         query = f"[out:json][timeout:300];({clauses});out geom;"
         req = urllib.request.Request(
@@ -114,25 +118,41 @@ def main():
         for el in data.get("elements", []):
             if el.get("type") != "way" or "geometry" not in el:
                 continue
-            hw = el.get("tags", {}).get("highway", "")
-            tier = "major" if hw in MAJOR else "minor"
-            ways[el["id"]] = (tier, [[round(g["lon"], 5), round(g["lat"], 5)] for g in el["geometry"]])
-        print(f"  batch {i // BATCH + 1}/{(len(spots) + BATCH - 1) // BATCH}: {len(ways)} ways total")
+            tags = el.get("tags", {})
+            coords = [[round(g["lon"], 5), round(g["lat"], 5)] for g in el["geometry"]]
+            if "building" in tags:
+                bldgs[el["id"]] = coords
+            else:
+                hw = tags.get("highway", "")
+                tier = "major" if hw in MAJOR else "minor"
+                ways[el["id"]] = (tier, tags.get("name"), coords)
+        print(f"  batch {i // BATCH + 1}/{(len(spots) + BATCH - 1) // BATCH}: "
+              f"{len(ways)} ways, {len(bldgs)} buildings")
         time.sleep(3)
 
-    # Bucket ways into ~0.5° regional chunks keyed by their first coordinate.
-    chunks = {}  # id -> {"major": [...], "minor": [...], "bounds": [minLng,minLat,maxLng,maxLat]}
-    for tier, coords in ways.values():
+    # Bucket everything into ~0.5° regional chunks keyed by first coordinate.
+    def chunk_for(chunks, coords):
         lng0, lat0 = coords[0]
         cid = f"{math.floor(lng0 / CELL_DEG)}_{math.floor(lat0 / CELL_DEG)}"
-        c = chunks.setdefault(cid, {"major": [], "minor": [], "bounds": [180, 90, -180, -90]})
-        c[tier].append(coords)
+        c = chunks.setdefault(
+            cid, {"major": [], "minor": [], "bldg": [], "bounds": [180, 90, -180, -90]}
+        )
         b = c["bounds"]
         for lng, lat in coords:
             if lng < b[0]: b[0] = lng
             if lat < b[1]: b[1] = lat
             if lng > b[2]: b[2] = lng
             if lat > b[3]: b[3] = lat
+        return c
+
+    chunks = {}
+    for tier, name, coords in ways.values():
+        entry = {"c": coords}
+        if name:
+            entry["n"] = name
+        chunk_for(chunks, coords)[tier].append(entry)
+    for coords in bldgs.values():
+        chunk_for(chunks, coords)["bldg"].append(coords)
 
     out_dir = f"{REPO}/public/streets"
     shutil.rmtree(out_dir, ignore_errors=True)
@@ -141,14 +161,17 @@ def main():
     for cid, c in chunks.items():
         path = f"{out_dir}/{cid}.json"
         with open(path, "w") as f:
-            json.dump({"major": c["major"], "minor": c["minor"]}, f, separators=(",", ":"))
+            json.dump(
+                {"major": c["major"], "minor": c["minor"], "bldg": c["bldg"]},
+                f, separators=(",", ":"),
+            )
         total += os.path.getsize(path)
 
     index = {
         "chunks": [{"id": cid, "b": c["bounds"]} for cid, c in chunks.items()],
-        # spot centers + near/far radii (meters) — the app builds edge-fade masks
-        # from these: minor streets fade at the near ring, arterials at the far
-        "spots": [[round(lng, 5), round(lat, 5), nr, fr] for lat, lng, nr, fr in spots],
+        # spot centers + near/far/building radii (meters) — the app fades each
+        # layer at its own ring: minors at near, arterials at far, footprints at bldg
+        "spots": [[round(lng, 5), round(lat, 5), nr, fr, br] for lat, lng, nr, fr, br in spots],
     }
     with open(f"{out_dir}/index.json", "w") as f:
         json.dump(index, f, separators=(",", ":"))
@@ -157,9 +180,9 @@ def main():
     if os.path.exists(legacy):
         os.remove(legacy)
 
-    n_pts = sum(len(coords) for _t, coords in ways.values())
-    print(f"wrote {out_dir}: {len(chunks)} chunks, {len(ways)} ways, {n_pts} points, "
-          f"{total / 1e6:.1f} MB total")
+    n_pts = sum(len(c) for _t, _n, c in ways.values()) + sum(len(c) for c in bldgs.values())
+    print(f"wrote {out_dir}: {len(chunks)} chunks, {len(ways)} ways + {len(bldgs)} buildings, "
+          f"{n_pts} points, {total / 1e6:.1f} MB total")
 
 
 if __name__ == "__main__":

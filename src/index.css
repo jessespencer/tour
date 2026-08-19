@@ -822,6 +822,23 @@ body {
   stroke-linecap: round;
 }
 
+.map-bldg {
+  fill: none;
+  stroke: rgba(233, 234, 228, 0.13);
+  stroke-linejoin: round;
+}
+
+.street-name {
+  fill: rgba(233, 234, 228, 0.5);
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--ground);
+  stroke-width: 0.02em;
+}
+
 .photo-tile {
   outline: none;
   cursor: pointer;

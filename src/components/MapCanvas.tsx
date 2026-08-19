@@ -33,18 +33,65 @@ interface StreetBucket {
 interface StreetLayers {
   major: StreetBucket[];
   minor: StreetBucket[];
+  bldg: StreetBucket[];
+  labels: StreetLabel[];
 }
 
 const STREETS_INDEX_K = 5; // fetch the tiny chunk index once the user commits to zooming
 const STREETS_FETCH_K = 10; // start pulling street chunks near the viewport
 const STREETS_MAJOR_K = 14;
 const STREETS_MINOR_K = 28;
+const STREET_NAMES_K = 380; // street-name labels ease in past this zoom
+const BLDG_K = 110; // building footprints ease in past this zoom
+const LABEL_STEP = 0.09; // anchor spacing along a way, viewBox units (~440 m)
+// Labels are assigned a fixed priority level at load: level g claims a cell in
+// grid g (viewBox units) and shows past LABEL_LVL_K[g]. Deterministic, so the
+// visible set never reshuffles while zooming — it only gains fading-in layers.
+const LABEL_GRIDS = [1.2, 0.3, 0.12];
+const LABEL_LVL_K = [STREET_NAMES_K, 900, 2000, 4200];
+const MAX_K = 8000; // ~600 m viewport — block level
 
 interface StreetSpot {
   x: number;
   y: number;
   rNear: number; // full residential grid extent, viewBox units
   rFar: number; // arterials-only extent
+  rBldg: number; // building-footprint extent
+}
+
+interface StreetWay {
+  n?: string; // OSM name, when tagged
+  c: [number, number][];
+}
+
+interface StreetLabel {
+  name: string;
+  x: number;
+  y: number;
+  angle: number; // degrees, flipped to keep text upright
+  alpha: number;
+  lvl?: number; // priority level, set by assignLabelLevels
+}
+
+/** One pass over a chunk's labels (arterials first): each label takes the
+ *  coarsest free grid cell and blocks that spot in every finer grid, so
+ *  density grows with zoom without any per-frame reselection. */
+function assignLabelLevels(labels: StreetLabel[]): StreetLabel[] {
+  const seen = LABEL_GRIDS.map(() => new Set<string>());
+  return labels.map((lb) => {
+    let lvl = LABEL_GRIDS.length; // deepest tier: only near max zoom
+    for (let g = 0; g < LABEL_GRIDS.length; g++) {
+      const key = `${Math.round(lb.x / LABEL_GRIDS[g])}:${Math.round(lb.y / LABEL_GRIDS[g])}`;
+      if (!seen[g].has(key)) {
+        lvl = g;
+        for (let h = g; h < LABEL_GRIDS.length; h++) {
+          seen[h].add(`${Math.round(lb.x / LABEL_GRIDS[h])}:${Math.round(lb.y / LABEL_GRIDS[h])}`);
+        }
+        break;
+      }
+    }
+    return { ...lb, lvl };
+  });
 }
 
 interface StreetChunkMeta {
@@ -82,19 +129,20 @@ function fadeAlpha(t: number): number {
  *  ways sharing a cell+band merge into one path); ways near the edge are also
  *  probabilistically dropped, which reads as a feathered dissolve. */
 function buildStreetBuckets(
-  lines: [number, number][][],
+  ways: StreetWay[],
   tier: 'major' | 'minor',
   keyPrefix: string,
   spots: StreetSpot[],
-): StreetBucket[] {
+): { buckets: StreetBucket[]; labels: StreetLabel[] } {
   const CELL = 2; // viewBox units ≈ 10 km
   const cells = new Map<string, { d: string; alpha: number; x0: number; y0: number; x1: number; y1: number }>();
-  for (const line of lines) {
+  const labels: StreetLabel[] = [];
+  for (const way of ways) {
     let d = '';
     let first = true;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const projected: [number, number][] = [];
-    for (const pt of line) {
+    for (const pt of way.c) {
       const p = projection(pt);
       if (!p) {
         first = true;
@@ -110,7 +158,8 @@ function buildStreetBuckets(
     }
     if (!d) continue;
 
-    const [mx, my] = projected[projected.length >> 1];
+    const mid = projected.length >> 1;
+    const [mx, my] = projected[mid];
     let t = Infinity;
     for (const s of spots) {
       const r = tier === 'major' ? s.rFar : s.rNear;
@@ -122,6 +171,106 @@ function buildStreetBuckets(
     if (alpha <= 0) continue;
     if (hash01(mx, my) > Math.min(1, alpha * 1.8 + 0.05)) continue; // dissolve
     const qa = Math.ceil(alpha * 5) / 5; // 5 opacity bands
+
+    // Anchor labels along named ways every LABEL_STEP so even a viewport much
+    // shorter than the way still contains one; text angled along the street,
+    // flipped upright. Dedupe at render time keeps overview density sane.
+    if (way.n && alpha > 0.55 && projected.length >= 2) {
+      let next = LABEL_STEP / 2;
+      let walked = 0;
+      let emitted = 0;
+      for (let i = 1; i < projected.length; i++) {
+        const [ax, ay] = projected[i - 1];
+        const [bx, by] = projected[i];
+        const seg = Math.hypot(bx - ax, by - ay);
+        while (walked + seg >= next) {
+          const f = (next - walked) / seg;
+          let angle = (Math.atan2(by - ay, bx - ax) * 180) / Math.PI;
+          if (angle > 90) angle -= 180;
+          if (angle < -90) angle += 180;
+          labels.push({
+            name: way.n,
+            x: ax + (bx - ax) * f,
+            y: ay + (by - ay) * f,
+            angle,
+            alpha,
+          });
+          emitted++;
+          next += LABEL_STEP;
+        }
+        walked += seg;
+      }
+      // OSM often splits a street into per-block ways shorter than the anchor
+      // step — give those one midpoint anchor so the street still labels.
+      if (emitted === 0 && walked > 0.008) {
+        const [ax, ay] = projected[Math.max(0, mid - 1)];
+        const [bx, by] = projected[Math.min(projected.length - 1, mid + 1)];
+        let angle = (Math.atan2(by - ay, bx - ax) * 180) / Math.PI;
+        if (angle > 90) angle -= 180;
+        if (angle < -90) angle += 180;
+        labels.push({ name: way.n, x: mx, y: my, angle, alpha });
+      }
+    }
+
+    const key = `${keyPrefix}:${Math.round(x0 / CELL)}:${Math.round(y0 / CELL)}:${qa}`;
+    const cell = cells.get(key);
+    if (cell) {
+      cell.d += d;
+      cell.x0 = Math.min(cell.x0, x0);
+      cell.y0 = Math.min(cell.y0, y0);
+      cell.x1 = Math.max(cell.x1, x1);
+      cell.y1 = Math.max(cell.y1, y1);
+    } else {
+      cells.set(key, { d, alpha: qa, x0, y0, x1, y1 });
+    }
+  }
+  return { buckets: [...cells.entries()].map(([key, c]) => ({ key, ...c })), labels };
+}
+
+/** Building footprints — closed rings, faded at the (tighter) building radius. */
+function buildBldgBuckets(
+  rings: [number, number][][],
+  keyPrefix: string,
+  spots: StreetSpot[],
+): StreetBucket[] {
+  const CELL = 1; // ~5 km cells; footprint data is dense and local
+  const cells = new Map<string, { d: string; alpha: number; x0: number; y0: number; x1: number; y1: number }>();
+  for (const ring of rings) {
+    let d = '';
+    let first = true;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    let mx = 0, my = 0, n = 0;
+    for (const pt of ring) {
+      const p = projection(pt);
+      if (!p) {
+        first = true;
+        continue;
+      }
+      d += `${first ? 'M' : 'L'}${p[0].toFixed(4)},${p[1].toFixed(4)}`;
+      first = false;
+      mx += p[0];
+      my += p[1];
+      n++;
+      if (p[0] < x0) x0 = p[0];
+      if (p[1] < y0) y0 = p[1];
+      if (p[0] > x1) x1 = p[0];
+      if (p[1] > y1) y1 = p[1];
+    }
+    if (!d || n === 0) continue;
+    d += 'Z';
+    mx /= n;
+    my /= n;
+
+    let t = Infinity;
+    for (const s of spots) {
+      if (s.rBldg <= 0) continue;
+      const rel = Math.hypot(mx - s.x, my - s.y) / s.rBldg;
+      if (rel < t) t = rel;
+    }
+    const alpha = fadeAlpha(t);
+    if (alpha <= 0) continue;
+    if (hash01(mx, my) > Math.min(1, alpha * 1.8 + 0.05)) continue; // dissolve
+    const qa = Math.ceil(alpha * 5) / 5;
 
     const key = `${keyPrefix}:${Math.round(x0 / CELL)}:${Math.round(y0 / CELL)}:${qa}`;
     const cell = cells.get(key);
@@ -229,7 +378,7 @@ export function MapCanvas({
     if (!svgRef.current) return;
     const svg = select(svgRef.current);
     const behavior = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([1, 2400])
+      .scaleExtent([1, MAX_K])
       .translateExtent(extent)
       .on('zoom', (event) => setT(event.transform));
     svg.call(behavior);
@@ -298,7 +447,7 @@ export function MapCanvas({
       .then((r) => (r.ok ? r.json() : null))
       .then(
         (data: {
-          spots: [number, number, number, number][]; // lng, lat, near m, far m
+          spots: [number, number, number, number, number][]; // lng, lat, near/far/bldg m
           chunks: { id: string; b: [number, number, number, number] }[]; // lon/lat bounds
         } | null) => {
           if (!data) return;
@@ -307,7 +456,7 @@ export function MapCanvas({
             const p1 = projection([lng, lat + m / 111320]);
             return p0 && p1 ? Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) : 0;
           };
-          const spots = data.spots.flatMap(([lng, lat, near, far]) => {
+          const spots = data.spots.flatMap(([lng, lat, near, far, bldg]) => {
             const p = projection([lng, lat]);
             if (!p) return [];
             return [{
@@ -315,6 +464,7 @@ export function MapCanvas({
               y: p[1],
               rNear: metersToUnits(lng, lat, near),
               rFar: metersToUnits(lng, lat, far),
+              rBldg: metersToUnits(lng, lat, bldg ?? 0),
             }];
           });
           const chunks = data.chunks.flatMap(({ id, b }) => {
@@ -356,11 +506,16 @@ export function MapCanvas({
       chunksRequested.current.add(c.id);
       fetch(`/streets/${c.id}.json`)
         .then((r) => (r.ok ? r.json() : null))
-        .then((data: { major: [number, number][][]; minor: [number, number][][] } | null) => {
+        .then((data: { major: StreetWay[]; minor: StreetWay[]; bldg?: [number, number][][] } | null) => {
           if (!data) return;
+          const major = buildStreetBuckets(data.major, 'major', `M${c.id}`, streetsIndex.spots);
+          const minor = buildStreetBuckets(data.minor, 'minor', `m${c.id}`, streetsIndex.spots);
           const layers = {
-            major: buildStreetBuckets(data.major, 'major', `M${c.id}`, streetsIndex.spots),
-            minor: buildStreetBuckets(data.minor, 'minor', `m${c.id}`, streetsIndex.spots),
+            major: major.buckets,
+            minor: minor.buckets,
+            bldg: buildBldgBuckets(data.bldg ?? [], `b${c.id}`, streetsIndex.spots),
+            // arterials first — they win the coarse (earliest-visible) label slots
+            labels: assignLabelLevels([...major.labels, ...minor.labels]),
           };
           setChunkLayers((prev) => ({ ...prev, [c.id]: layers }));
         })
@@ -432,8 +587,36 @@ export function MapCanvas({
             // Tiers ease in over a few zoom levels instead of popping at a threshold.
             const majorRamp = Math.min(1, (k - STREETS_MAJOR_K) / 6);
             const minorRamp = Math.min(1, Math.max(0, (k - STREETS_MINOR_K) / 10));
+            const bldgRamp = Math.min(1, Math.max(0, (k - BLDG_K) / 70));
+
+            // Labels: viewport-cull, gate by each label's fixed level. Set
+            // membership is stable while zooming — levels only fade in.
+            const labels: StreetLabel[] = [];
+            if (k >= STREET_NAMES_K) {
+              outer: for (const l of loaded) {
+                for (const lb of l.labels) {
+                  if (k < LABEL_LVL_K[Math.min(lb.lvl ?? LABEL_GRIDS.length, LABEL_LVL_K.length - 1)]) continue;
+                  if (lb.x < vx0 || lb.x > vx1 || lb.y < vy0 || lb.y > vy1) continue;
+                  labels.push(lb);
+                  if (labels.length >= 160) break outer;
+                }
+              }
+            }
+
             return (
               <g className="map-streets">
+                {bldgRamp > 0 &&
+                  loaded.flatMap((l) =>
+                    l.bldg.filter(visible).map((b) => (
+                      <path
+                        key={b.key}
+                        d={b.d}
+                        className="map-bldg"
+                        strokeWidth={0.3 / k}
+                        strokeOpacity={b.alpha * bldgRamp}
+                      />
+                    )),
+                  )}
                 {minorRamp > 0 &&
                   loaded.flatMap((l) =>
                     l.minor.filter(visible).map((b) => (
@@ -457,6 +640,24 @@ export function MapCanvas({
                     />
                   )),
                 )}
+                {labels.map((lb) => {
+                  const lvlK = LABEL_LVL_K[Math.min(lb.lvl ?? LABEL_GRIDS.length, LABEL_LVL_K.length - 1)];
+                  const fade = Math.min(1, (k - lvlK) / (lvlK * 0.45));
+                  return (
+                    <text
+                      key={`${lb.name}:${lb.x.toFixed(3)}:${lb.y.toFixed(3)}`}
+                      className="street-name"
+                      x={lb.x}
+                      y={lb.y}
+                      dy={-2.2 / k}
+                      fontSize={10.5 / k}
+                      transform={`rotate(${lb.angle} ${lb.x} ${lb.y})`}
+                      opacity={lb.alpha * fade}
+                    >
+                      {lb.name}
+                    </text>
+                  );
+                })}
               </g>
             );
           })()}
@@ -476,6 +677,10 @@ export function MapCanvas({
                 if (!seg.path) return null;
                 const progress = segmentProgress(seg, timeDays);
                 if (progress <= 0) return null;
+                // Dash-based progress only while animating: pathLength
+                // normalization has float error that leaves a visible gap
+                // at the venue dot when magnified to street zoom.
+                if (progress >= 1) return <path key={i} d={seg.path} />;
                 return (
                   <path
                     key={i}
@@ -548,9 +753,9 @@ export function MapCanvas({
                   />
                 )}
                 {list.length > 1 && (
-                  <g transform={`translate(${w / 2},${-w / 2})`}>
-                    <circle r={7.5 / k} className="tile-count-bg" />
-                    <text className="tile-count" fontSize={8.5 / k} dy={3 / k} textAnchor="middle">
+                  <g transform={`translate(${w / 2},${-w / 2}) scale(${1 / k})`}>
+                    <circle r={7.5} className="tile-count-bg" />
+                    <text className="tile-count" fontSize={8.5} dy={3} textAnchor="middle">
                       {list.length}
                     </text>
                   </g>
@@ -563,14 +768,12 @@ export function MapCanvas({
             (() => {
               const dot = venueDots.find((d) => d.venue.id === selectedVenueId);
               if (!dot || dot.firstDay > timeDays) return null;
+              // Screen-space radius: tiny user-unit circles get flattened into
+              // visible polygons at extreme zoom.
               return (
-                <circle
-                  className="dot-select-ring"
-                  cx={dot.point[0]}
-                  cy={dot.point[1]}
-                  r={dotR * 2.6}
-                  strokeWidth={symbolStroke}
-                />
+                <g transform={`translate(${dot.point[0]},${dot.point[1]}) scale(${1 / k})`}>
+                  <circle className="dot-select-ring" r={dotR * 2.6 * k} strokeWidth={symbolStroke * k} />
+                </g>
               );
             })()}
 
@@ -598,17 +801,19 @@ export function MapCanvas({
                 onMouseLeave={() => setHover(null)}
                 onFocus={() => setHover(null)}
               >
-                {!unknown && <circle cx={point[0]} cy={point[1]} r={dotR * 2} fill={color} className="dot-halo" />}
-                <circle
-                  cx={point[0]}
-                  cy={point[1]}
-                  r={dotR}
-                  fill={unknown ? 'var(--ground)' : color}
-                  stroke={unknown ? color : 'var(--ground)'}
-                  strokeWidth={symbolStroke}
-                  strokeDasharray={unknown ? `${3 / k} ${2 / k}` : undefined}
-                  className="dot-core"
-                />
+                {/* Screen-space geometry inside a 1/k group — user-unit-sized
+                    circles get flattened into visible polygons at deep zoom. */}
+                <g transform={`translate(${point[0]},${point[1]}) scale(${1 / k})`}>
+                  {!unknown && <circle r={dotR * 2 * k} fill={color} className="dot-halo" />}
+                  <circle
+                    r={dotR * k}
+                    fill={unknown ? 'var(--ground)' : color}
+                    stroke={unknown ? color : 'var(--ground)'}
+                    strokeWidth={symbolStroke * k}
+                    strokeDasharray={unknown ? '3 2' : undefined}
+                    className="dot-core"
+                  />
+                </g>
               </g>
             );
           })}
