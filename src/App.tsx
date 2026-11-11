@@ -215,7 +215,11 @@ export function App() {
 
       <footer className="footer">
         <span>Dates & venues verified against original tour itineraries and day sheets</span>
-        <a href="mailto:jessespencerw@gmail.com?subject=Tour%20map%20correction">
+        <a
+          href="https://github.com/jessespencer/tour/issues/new?title=Tour%20map%20correction"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           Remember it differently? Send a correction
         </a>
       </footer>
