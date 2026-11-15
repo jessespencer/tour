@@ -14,19 +14,22 @@ export function Lightbox({ photos, index, onNav, onClose }: LightboxProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const photo = photos[index];
 
+  // Take focus on open, hand it back to whatever opened us on close.
   useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
     closeRef.current?.focus();
+    return () => opener?.focus?.();
   }, []);
 
+  // Escape is handled once, in App, so it closes only the topmost layer.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-      else if (e.key === 'ArrowRight' && index < photos.length - 1) onNav(index + 1);
+      if (e.key === 'ArrowRight' && index < photos.length - 1) onNav(index + 1);
       else if (e.key === 'ArrowLeft' && index > 0) onNav(index - 1);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [index, photos.length, onNav, onClose]);
+  }, [index, photos.length, onNav]);
 
   if (!photo) return null;
   const show = showById.get(photo.showId);
