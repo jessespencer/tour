@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useRef, type CSSProperties } from 'react';
 import { legById, legRoutes, photoAlt, photosByShow, photoThumb, showById, venueById } from '../lib/derive';
 import { formatDate } from '../lib/format';
 import { usePanelFocus } from '../lib/usePanelFocus';
@@ -22,6 +22,7 @@ interface DetailPanelProps {
   onClose: () => void;
   onSelectShow: (showId: string) => void;
   onOpenPhotos: (photos: Photo[], index: number) => void;
+  onOpenChapter: (legId: string) => void;
 }
 
 export function DetailPanel({
@@ -30,6 +31,7 @@ export function DetailPanel({
   onClose,
   onSelectShow,
   onOpenPhotos,
+  onOpenChapter,
 }: DetailPanelProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
   usePanelFocus(closeRef);
@@ -57,6 +59,17 @@ export function DetailPanel({
         ×
       </button>
 
+      {route && (
+        <button
+          type="button"
+          className="detail-back"
+          onClick={() => onOpenChapter(route.leg.id)}
+          style={{ '--leg-color': route.leg.color } as CSSProperties}
+        >
+          <span aria-hidden="true">←</span> {route.leg.name}
+        </button>
+      )}
+
       <header className="detail-header">
         <p className="detail-kicker">
           {venue.city}, {venue.state}
@@ -67,9 +80,27 @@ export function DetailPanel({
 
       {venueShows.map((show) => {
         const leg = legById.get(show.legId);
+        const showPhotos = photosByShow.get(show.id) ?? [];
         return (
           <section key={show.id} className="detail-show">
             <h3 className="detail-date">{formatDate(show.date)}</h3>
+            {showPhotos.length > 0 && (
+              <div className="detail-photos">
+                {showPhotos.map((p, i) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="photo-thumb"
+                    onClick={() => onOpenPhotos(showPhotos, i)}
+                    aria-label={photoAlt(p)}
+                  >
+                    <img src={photoThumb(p)} alt={photoAlt(p)} loading="lazy" />
+                    {p.kind === 'video' && <span className="photo-play" aria-hidden="true" />}
+                    {p.lat !== undefined && <span className="photo-gps" aria-hidden="true" />}
+                  </button>
+                ))}
+              </div>
+            )}
             <dl className="detail-facts">
               {leg && (
                 <>
@@ -115,27 +146,6 @@ export function DetailPanel({
             </dl>
             {show.note && <p className="detail-note">{show.note}</p>}
             {!show.confirmed && <p className="detail-unconfirmed">In the record, not yet verified</p>}
-            {(() => {
-              const showPhotos = photosByShow.get(show.id);
-              if (!showPhotos?.length) return null;
-              return (
-                <div className="detail-photos">
-                  {showPhotos.map((p, i) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className="photo-thumb"
-                      onClick={() => onOpenPhotos(showPhotos, i)}
-                      aria-label={photoAlt(p)}
-                    >
-                      <img src={photoThumb(p)} alt={photoAlt(p)} loading="lazy" />
-                      {p.kind === 'video' && <span className="photo-play" aria-hidden="true" />}
-                      {p.lat !== undefined && <span className="photo-gps" aria-hidden="true" />}
-                    </button>
-                  ))}
-                </div>
-              );
-            })()}
           </section>
         );
       })}

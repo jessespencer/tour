@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChapterPanel } from './components/ChapterPanel';
 import { DetailPanel } from './components/DetailPanel';
 import { LegRail } from './components/LegRail';
 import { Lightbox } from './components/Lightbox';
 import { ListView } from './components/ListView';
-import { MapCanvas, type FlyRequest } from './components/MapCanvas';
+import { MapCanvas, type CameraRequest, type CameraTarget } from './components/MapCanvas';
 import { Scrubber } from './components/Scrubber';
 import { ShowStepper } from './components/ShowStepper';
 import { legs } from './data/legs';
-import { milesAt, showById, showsPlayedAt, venueDots } from './lib/derive';
-import { TOTAL_DAYS } from './lib/time';
+import { legRoutes, legsDayRange, milesAt, showById, showsPlayedAt, venueDots } from './lib/derive';
+import { dayOf, TOTAL_DAYS } from './lib/time';
 import type { Photo } from './types';
 
 const PLAY_SPEED = 36.5; // timeline days per second ≈ 10s per year
+const CHAPTER_PLAY_SECONDS = 12; // a chapter plays end to end in about this long
 
 const ALL_LEG_IDS = new Set(legs.map((l) => l.id));
+const FULL_RANGE: [number, number] = [0, TOTAL_DAYS];
 
 const reducedMotion =
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -64,30 +67,43 @@ function usePageZoomGuard() {
 
 export function App() {
   usePageZoomGuard();
-  // Highlight semantics: empty selection = no focus, every leg fully lit.
+  // Empty selection = all tours. One leg = that tour's chapter. More = compare.
   const [selectedLegIds, setSelectedLegIds] = useState<Set<string>>(() => new Set());
   const [timeDays, setTimeDays] = useState(TOTAL_DAYS);
   const [playing, setPlaying] = useState(false);
   const [selectedShowId, setSelectedShowId] = useState<string | null>(null);
   const [view, setView] = useState<'map' | 'list'>('map');
-  const [flyRequest, setFlyRequest] = useState<FlyRequest | null>(null);
+  const [camera, setCamera] = useState<CameraRequest | null>(null);
   const [lightbox, setLightbox] = useState<{ photos: Photo[]; index: number } | null>(null);
 
-  const activeLegIds = selectedLegIds.size === 0 ? ALL_LEG_IDS : selectedLegIds;
+  const scoped = selectedLegIds.size > 0;
+  const activeLegIds = scoped ? selectedLegIds : ALL_LEG_IDS;
+  const chapterLegId = selectedLegIds.size === 1 ? [...selectedLegIds][0] : null;
+  const range = scoped ? legsDayRange(selectedLegIds) : FULL_RANGE;
   const selectedShow = selectedShowId ? showById.get(selectedShowId) : undefined;
   const selectedVenueId = selectedShow?.venueId ?? null;
 
+  const moveCamera = (target: CameraTarget) =>
+    setCamera((prev) => ({ ...target, seq: (prev?.seq ?? 0) + 1 }));
+
+  // Playback stops at the end of whatever window the timeline is showing.
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
   useEffect(() => {
     if (!playing) return;
     let last = performance.now();
     let raf = requestAnimationFrame(function step(now: number) {
       const dt = (now - last) / 1000;
       last = now;
+      const [start, end] = rangeRef.current;
+      // Chapters are weeks long, the whole run is over a year — pace each so
+      // playback takes a watchable amount of time.
+      const speed = end - start < 120 ? (end - start) / CHAPTER_PLAY_SECONDS : PLAY_SPEED;
       setTimeDays((prev) => {
-        const next = prev + dt * PLAY_SPEED;
-        if (next >= TOTAL_DAYS) {
+        const next = prev + dt * speed;
+        if (next >= end) {
           setPlaying(false);
-          return TOTAL_DAYS;
+          return end;
         }
         return next;
       });
@@ -96,41 +112,75 @@ export function App() {
     return () => cancelAnimationFrame(raf);
   }, [playing]);
 
-  const toggleLeg = (legId: string) => {
+  const applyLegSelection = (next: Set<string>) => {
     setPlaying(false);
-    setSelectedLegIds((prev) => {
-      const next = new Set(prev);
+    setSelectedShowId(null);
+    setSelectedLegIds(next);
+    setTimeDays(next.size > 0 ? legsDayRange(next)[1] : TOTAL_DAYS);
+    moveCamera(next.size > 0 ? { kind: 'legs', legIds: [...next] } : { kind: 'reset' });
+  };
+
+  // Plain click opens that tour (or closes it if it's already the only one
+  // open); shift/cmd-click adds or removes it for comparison.
+  const handleSelectLeg = (legId: string, additive: boolean) => {
+    let next: Set<string>;
+    if (additive) {
+      next = new Set(selectedLegIds);
       if (next.has(legId)) next.delete(legId);
       else next.add(legId);
-      return next;
-    });
+    } else {
+      next = chapterLegId === legId ? new Set() : new Set([legId]);
+    }
+    applyLegSelection(next);
+  };
+
+  const clearLegs = () => applyLegSelection(new Set());
+  const openChapter = (legId: string) => applyLegSelection(new Set([legId]));
+
+  const closeShow = () => {
+    setSelectedShowId(null);
+    if (scoped) moveCamera({ kind: 'legs', legIds: [...selectedLegIds] });
   };
 
   const handleScrub = (day: number) => {
     setPlaying(false);
-    setTimeDays(day);
+    setTimeDays(Math.max(range[0], Math.min(range[1], day)));
   };
 
   const handleTogglePlay = () => {
-    if (!playing && timeDays >= TOTAL_DAYS) setTimeDays(0);
+    if (!playing && (timeDays >= range[1] - 0.01 || timeDays < range[0])) setTimeDays(range[0]);
     setPlaying((p) => !p);
   };
 
-  // Dot clicks: open the panel on the venue's first show, no camera move.
+  // Make sure a selected show is on the map: the timeline must have reached it.
+  const revealShow = (showId: string) => {
+    const show = showById.get(showId);
+    if (show) setTimeDays((d) => Math.max(d, dayOf(show.date)));
+  };
+
+  // Dot clicks: open the panel on the venue's show in the open tour (or its
+  // first show), no camera move.
   const handleSelectVenue = (venueId: string) => {
     setPlaying(false);
     const dot = venueDots.find((d) => d.venue.id === venueId);
-    if (dot) setSelectedShowId(dot.shows[0].id);
+    if (!dot) return;
+    const show = dot.shows.find((s) => activeLegIds.has(s.legId)) ?? dot.shows[0];
+    setSelectedShowId(show.id);
   };
 
-  // Stepper, run-list, and list-view clicks: select and fly there.
+  // Stepper, run-list, and list-view clicks: select and fly there. A show
+  // outside the open tour switches the chapter to that show's tour.
   const handleNavigateToShow = (showId: string) => {
     const show = showById.get(showId);
     if (!show) return;
     setPlaying(false);
+    if (scoped && !selectedLegIds.has(show.legId)) {
+      setSelectedLegIds(new Set([show.legId]));
+    }
     setSelectedShowId(showId);
+    revealShow(showId);
     setView('map');
-    setFlyRequest((prev) => ({ venueId: show.venueId, seq: (prev?.seq ?? 0) + 1 }));
+    moveCamera({ kind: 'venue', venueId: show.venueId });
   };
 
   const handleOpenPhotos = (photos: Photo[], index: number) => {
@@ -139,13 +189,14 @@ export function App() {
   };
 
   // One Escape handler for the whole app, so a press closes only the topmost
-  // layer: photo viewer, then show.
+  // layer: photo viewer, then show, then tour chapter.
   // The listener is attached once and reads the latest state through a ref, so
   // it can't be detached mid-dispatch by a re-render.
   const escapeRef = useRef<() => void>(() => {});
   escapeRef.current = () => {
     if (lightbox) setLightbox(null);
-    else if (selectedShowId) setSelectedShowId(null);
+    else if (selectedShowId) closeShow();
+    else if (scoped) clearLegs();
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -155,7 +206,14 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const odometerMiles = useOdometer(milesAt(timeDays));
+  // The chapter's "you are here": last show the playhead has reached.
+  const chapterRoute = chapterLegId ? legRoutes.find((r) => r.leg.id === chapterLegId) : undefined;
+  const playheadShowId =
+    chapterRoute?.shows.filter((s) => dayOf(s.date) <= timeDays).at(-1)?.id ?? null;
+
+  const statsLegIds = scoped ? selectedLegIds : undefined;
+  const odometerMiles = useOdometer(milesAt(timeDays, statsLegIds));
+  const panelOpen = view === 'map' && (!!selectedVenueId || !!chapterLegId);
 
   return (
     <div className="app">
@@ -179,7 +237,7 @@ export function App() {
             {view === 'map' ? 'List' : 'Map'}
           </button>
           <div className="stat">
-            <span className="stat-value">{showsPlayedAt(timeDays)}</span>
+            <span className="stat-value">{showsPlayedAt(timeDays, statsLegIds)}</span>
             <span className="stat-label">shows</span>
           </div>
           <div className="stat">
@@ -189,7 +247,7 @@ export function App() {
         </div>
       </header>
 
-      <LegRail selectedLegIds={selectedLegIds} onToggle={toggleLeg} />
+      <LegRail selectedLegIds={selectedLegIds} onSelect={handleSelectLeg} onClear={clearLegs} />
 
       <main className={view === 'list' ? 'stage stage--list' : 'stage'}>
         {view === 'map' ? (
@@ -199,16 +257,28 @@ export function App() {
             selectedVenueId={selectedVenueId}
             onSelectVenue={handleSelectVenue}
             onOpenPhotos={handleOpenPhotos}
-            flyTo={flyRequest}
+            camera={camera}
+            panelOpen={panelOpen}
           />
         ) : (
           <ListView activeLegIds={activeLegIds} onSelectShow={handleNavigateToShow} />
         )}
-        {selectedVenueId && (
+        {view === 'map' && selectedVenueId && (
           <DetailPanel
             venueId={selectedVenueId}
             selectedShowId={selectedShowId}
-            onClose={() => setSelectedShowId(null)}
+            onClose={closeShow}
+            onSelectShow={handleNavigateToShow}
+            onOpenPhotos={handleOpenPhotos}
+            onOpenChapter={openChapter}
+          />
+        )}
+        {view === 'map' && !selectedVenueId && chapterLegId && (
+          <ChapterPanel
+            key={chapterLegId}
+            legId={chapterLegId}
+            currentShowId={playheadShowId}
+            onClose={clearLegs}
             onSelectShow={handleNavigateToShow}
             onOpenPhotos={handleOpenPhotos}
           />
@@ -227,6 +297,8 @@ export function App() {
       {view === 'map' && (
         <Scrubber
           value={timeDays}
+          range={range}
+          activeLegIds={activeLegIds}
           playing={playing}
           onScrub={handleScrub}
           onTogglePlay={handleTogglePlay}
