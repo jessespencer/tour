@@ -1,10 +1,12 @@
 import { useCallback, useRef } from 'react';
 import { shows } from '../data/shows';
 import { legById } from '../lib/derive';
-import { dayOf, labelForDay, TOTAL_DAYS } from '../lib/time';
+import { dayOf, labelForDay } from '../lib/time';
 
 interface ScrubberProps {
   value: number;              // days from timeline start
+  range: [number, number];    // visible window — the whole run, or one chapter
+  activeLegIds: Set<string>;
   playing: boolean;
   onScrub: (day: number) => void;
   onTogglePlay: () => void;
@@ -12,18 +14,24 @@ interface ScrubberProps {
 
 const ticks = shows.map((s) => ({
   id: s.id,
-  pct: (dayOf(s.date) / TOTAL_DAYS) * 100,
+  legId: s.legId,
+  day: dayOf(s.date),
   color: legById.get(s.legId)?.color ?? 'currentColor',
 }));
 
-export function Scrubber({ value, playing, onScrub, onTogglePlay }: ScrubberProps) {
+export function Scrubber({ value, range, activeLegIds, playing, onScrub, onTogglePlay }: ScrubberProps) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const [start, end] = range;
+  const span = Math.max(1, end - start);
 
-  const dayFromPointer = useCallback((clientX: number) => {
-    const rect = trackRef.current!.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    return pct * TOTAL_DAYS;
-  }, []);
+  const dayFromPointer = useCallback(
+    (clientX: number) => {
+      const rect = trackRef.current!.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return start + pct * span;
+    },
+    [start, span],
+  );
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -35,16 +43,18 @@ export function Scrubber({ value, playing, onScrub, onTogglePlay }: ScrubberProp
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    const step = e.shiftKey ? 14 : 3;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') onScrub(Math.min(TOTAL_DAYS, value + step));
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') onScrub(Math.max(0, value - step));
-    else if (e.key === 'Home') onScrub(0);
-    else if (e.key === 'End') onScrub(TOTAL_DAYS);
+    // Chapters are short — step a day at a time inside one.
+    const step = span < 60 ? (e.shiftKey ? 7 : 1) : e.shiftKey ? 14 : 3;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') onScrub(Math.min(end, value + step));
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') onScrub(Math.max(start, value - step));
+    else if (e.key === 'Home') onScrub(start);
+    else if (e.key === 'End') onScrub(end);
     else return;
     e.preventDefault();
   };
 
-  const pct = (value / TOTAL_DAYS) * 100;
+  const toPct = (day: number) => ((day - start) / span) * 100;
+  const pct = Math.max(0, Math.min(100, toPct(value)));
 
   return (
     <div className="scrubber">
@@ -66,14 +76,16 @@ export function Scrubber({ value, playing, onScrub, onTogglePlay }: ScrubberProp
         )}
       </button>
 
+      <span className="scrub-date scrub-date--start">{labelForDay(start)}</span>
+
       <div
         ref={trackRef}
         className="scrub-track"
         role="slider"
         tabIndex={0}
         aria-label="Timeline"
-        aria-valuemin={0}
-        aria-valuemax={TOTAL_DAYS}
+        aria-valuemin={Math.round(start)}
+        aria-valuemax={Math.round(end)}
         aria-valuenow={Math.round(value)}
         aria-valuetext={labelForDay(value)}
         onPointerDown={handlePointerDown}
@@ -81,13 +93,15 @@ export function Scrubber({ value, playing, onScrub, onTogglePlay }: ScrubberProp
         onKeyDown={handleKeyDown}
       >
         <div className="scrub-rail" />
-        {ticks.map((tick) => (
-          <span
-            key={tick.id}
-            className="scrub-tick"
-            style={{ left: `${tick.pct}%`, background: tick.color }}
-          />
-        ))}
+        {ticks.map((tick) =>
+          tick.day < start || tick.day > end ? null : (
+            <span
+              key={tick.id}
+              className={activeLegIds.has(tick.legId) ? 'scrub-tick' : 'scrub-tick scrub-tick--off'}
+              style={{ left: `${toPct(tick.day)}%`, background: tick.color }}
+            />
+          ),
+        )}
         <div className="scrub-fill" style={{ width: `${pct}%` }} />
         <div className="scrub-handle" style={{ left: `${pct}%` }} />
       </div>

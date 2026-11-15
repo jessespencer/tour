@@ -53,9 +53,10 @@ export const legRoutes: LegRoute[] = legs.map((leg) => {
 /** Cumulative est. road miles at a point on the timeline — segments in
  *  progress contribute proportionally, which is what makes the odometer
  *  climb smoothly between show dates. */
-export function milesAt(day: number): number {
+export function milesAt(day: number, legIds?: Set<string>): number {
   let sum = 0;
   for (const route of legRoutes) {
+    if (legIds && !legIds.has(route.leg.id)) continue;
     for (const seg of route.segments) {
       if (day >= seg.toDay) sum += seg.miles;
       else if (day > seg.fromDay && seg.toDay > seg.fromDay) {
@@ -66,8 +67,20 @@ export function milesAt(day: number): number {
   return sum;
 }
 
-export function showsPlayedAt(day: number): number {
-  return shows.reduce((n, s) => (dayOf(s.date) <= day ? n + 1 : n), 0);
+export function showsPlayedAt(day: number, legIds?: Set<string>): number {
+  return shows.reduce(
+    (n, s) => (dayOf(s.date) <= day && (!legIds || legIds.has(s.legId)) ? n + 1 : n),
+    0,
+  );
+}
+
+/** Timeline window for a set of legs, in days — what the scrubber crops to. */
+export function legsDayRange(legIds: Set<string>): [number, number] {
+  const picked = legs.filter((l) => legIds.has(l.id));
+  return [
+    Math.min(...picked.map((l) => dayOf(l.startDate))),
+    Math.max(...picked.map((l) => dayOf(l.endDate))),
+  ];
 }
 
 export interface VenueDot {
@@ -100,6 +113,15 @@ for (const photo of photos) {
 }
 for (const list of photosByShow.values()) {
   list.sort((a, b) => a.takenAt.localeCompare(b.takenAt));
+}
+
+/** Every photo from a leg's shows, chronological. */
+export function photosForLeg(legId: string): Photo[] {
+  const route = legRoutes.find((r) => r.leg.id === legId);
+  if (!route) return [];
+  return route.shows
+    .flatMap((s) => photosByShow.get(s.id) ?? [])
+    .sort((a, b) => a.takenAt.localeCompare(b.takenAt));
 }
 
 export function photoThumb(p: Photo): string {

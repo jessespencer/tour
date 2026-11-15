@@ -107,15 +107,17 @@ Detail opens as a panel sliding over the right side of the canvas — the map st
 
 ## Interactions
 
-**Leg filter.** Toggles in the rail, multi-select, all on by default. Deselecting a leg fades its route to near-transparent rather than removing it — the shape of the whole history should stay legible even while focused on one run. Show a count per leg.
+**Leg rail — tours as chapters.** "All tours" is the default. Clicking a leg opens it as a chapter: the map fits that leg's route beside the panel, the scrubber crops to the leg's dates, the header stats count only that leg, and the panel becomes the chapter page (cover photo, dates and billing, shows / cities / miles / photos, a photo strip, every show with the playhead's current show marked). Click it again, press Escape, or pick "All tours" to come back out. Shift- or cmd-click adds legs to compare them (map fit, scrubber and stats span the set; no chapter panel). Legs not in focus fade to near-transparent rather than disappearing — the shape of the whole history should stay legible. Show show and photo counts per leg.
 
-**Timeline scrubber.** Horizontal, spanning the full date range of the data. Two behaviors:
+**Timeline scrubber.** Horizontal, spanning the full date range — or the open chapter's dates. Two behaviors:
 - Drag the handle: routes draw progressively up to that date. Everything after is hidden.
-- Play button: animates forward at a readable pace, roughly 8–12 seconds for a full year. Pause on any interaction.
+- Play button: animates forward at a readable pace, roughly 8–12 seconds for a full year, or about 12 seconds for a whole chapter. Pause on any interaction.
 
 The scrubber is the primary way someone experiences this. It should feel good to drag — no jank, no layout shift, no debounce lag.
 
-**Venue interaction.** Hover reveals a small label with venue, city, date. Click opens the detail panel: full venue name and address, date, leg, billing, doors and set time and capacity where known, and the photo grid.
+**Venue interaction.** Hover reveals a small label with venue, city, date. Click opens the detail panel: a link back to the show's tour chapter, full venue name and address, date, the photo grid, then leg, billing, doors and set time and capacity where known.
+
+**Escape** closes one layer at a time: photo viewer, then show, then chapter.
 
 **Zoom and pan.** `d3.zoom` on the canvas, constrained to reasonable bounds. Dots and line weights scale inversely so they stay readable when zoomed in — the Northeast run is dense and needs it.
 

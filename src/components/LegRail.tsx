@@ -1,20 +1,46 @@
 import type { CSSProperties } from 'react';
 import { legs } from '../data/legs';
-import { legRoutes } from '../lib/derive';
+import { legRoutes, photosByShow } from '../lib/derive';
 import { formatRange } from '../lib/format';
 
 interface LegRailProps {
-  selectedLegIds: Set<string>;  // empty = no focus, everything lit
-  onToggle: (legId: string) => void;
+  selectedLegIds: Set<string>; // empty = all tours
+  onSelect: (legId: string, additive: boolean) => void;
+  onClear: () => void;
 }
 
-export function LegRail({ selectedLegIds, onToggle }: LegRailProps) {
-  const focused = selectedLegIds.size > 0;
+const photoCounts = new Map(
+  legRoutes.map((r) => [r.leg.id, r.shows.reduce((n, s) => n + (photosByShow.get(s.id)?.length ?? 0), 0)]),
+);
+
+// Every leg's color as an equal slice — the swatch for "all tours".
+const allSwatch = `conic-gradient(${legs
+  .map((l, i) => `${l.color} ${(i / legs.length) * 100}% ${((i + 1) / legs.length) * 100}%`)
+  .join(', ')})`;
+
+export function LegRail({ selectedLegIds, onSelect, onClear }: LegRailProps) {
+  const all = selectedLegIds.size === 0;
   return (
-    <nav className={focused ? 'leg-rail leg-rail--focused' : 'leg-rail'} aria-label="Tour legs">
+    <nav className="leg-rail" aria-label="Tours">
+      <button
+        type="button"
+        className={all ? 'leg-item leg-item--all leg-item--selected' : 'leg-item leg-item--all'}
+        aria-pressed={all}
+        onClick={onClear}
+      >
+        <span className="leg-swatch leg-swatch--all" style={{ background: allSwatch }} aria-hidden="true" />
+        <span className="leg-text">
+          <span className="leg-name leg-name--full">All tours</span>
+          <span className="leg-name leg-name--short" aria-hidden="true">
+            All
+          </span>
+        </span>
+      </button>
+
       {legs.map((leg) => {
         const route = legRoutes.find((r) => r.leg.id === leg.id);
         const count = route?.shows.length ?? 0;
+        const photos = photoCounts.get(leg.id) ?? 0;
         const selected = selectedLegIds.has(leg.id);
         return (
           <button
@@ -23,7 +49,7 @@ export function LegRail({ selectedLegIds, onToggle }: LegRailProps) {
             className={selected ? 'leg-item leg-item--selected' : 'leg-item'}
             style={{ '--leg-color': leg.color } as CSSProperties}
             aria-pressed={selected}
-            onClick={() => onToggle(leg.id)}
+            onClick={(e) => onSelect(leg.id, e.shiftKey || e.metaKey || e.ctrlKey)}
           >
             <span className="leg-swatch" style={{ background: leg.color }} aria-hidden="true" />
             <span className="leg-text">
@@ -33,11 +59,14 @@ export function LegRail({ selectedLegIds, onToggle }: LegRailProps) {
               </span>
               <span className="leg-meta">
                 {formatRange(leg.startDate, leg.endDate)} · {count} {count === 1 ? 'show' : 'shows'}
+                {photos > 0 && ` · ${photos} photos`}
               </span>
             </span>
           </button>
         );
       })}
+
+      <p className="leg-hint">Shift-click to compare tours</p>
     </nav>
   );
 }

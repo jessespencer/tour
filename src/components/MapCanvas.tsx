@@ -50,6 +50,7 @@ const LABEL_STEP = 0.09; // anchor spacing along a way, viewBox units (~440 m)
 const LABEL_GRIDS = [1.2, 0.3, 0.12];
 const LABEL_LVL_K = [STREET_NAMES_K, 900, 2000, 4200];
 const MAX_K = 8000; // ~600 m viewport — block level
+const MIN_K_PANEL = 0.55; // how far a coast-to-coast tour may shrink to fit beside a panel
 
 interface StreetSpot {
   x: number;
@@ -310,10 +311,14 @@ interface TileCluster {
   rot: number;           // deterministic small rotation, hand-placed feel
 }
 
-export interface FlyRequest {
-  venueId: string;
-  seq: number; // bump to re-fly to the same venue
-}
+/** Camera moves the app asks for. */
+export type CameraTarget =
+  | { kind: 'venue'; venueId: string }
+  | { kind: 'legs'; legIds: string[] }
+  | { kind: 'reset' };
+
+/** `seq` bumps on every request so asking for the same target re-fires. */
+export type CameraRequest = CameraTarget & { seq: number };
 
 interface MapCanvasProps {
   activeLegIds: Set<string>;
@@ -321,8 +326,12 @@ interface MapCanvasProps {
   selectedVenueId: string | null;
   onSelectVenue: (venueId: string) => void;
   onOpenPhotos: (photos: Photo[], index: number) => void;
-  flyTo: FlyRequest | null;
+  camera: CameraRequest | null;
+  panelOpen: boolean;
 }
+
+const PANEL_W = 390; // desktop side panel width — keep framed content clear of it
+const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export function MapCanvas({
   activeLegIds,
@@ -330,11 +339,14 @@ export function MapCanvas({
   selectedVenueId,
   onSelectVenue,
   onOpenPhotos,
-  flyTo,
+  camera,
+  panelOpen,
 }: MapCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const behaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [t, setT] = useState<ZoomTransform>(zoomIdentity);
+  const tRef = useRef<ZoomTransform>(zoomIdentity);
+  tRef.current = t;
   const [hover, setHover] = useState<Hover | null>(null);
   const [streetsIndex, setStreetsIndex] = useState<StreetsIndex | null>(null);
   const [chunkLayers, setChunkLayers] = useState<Record<string, StreetLayers>>({});
@@ -389,56 +401,127 @@ export function MapCanvas({
     };
   }, [extent]);
 
-  const flyToVenue = useCallback(
-    (venueId: string) => {
-      const dot = venueDots.find((d) => d.venue.id === venueId);
-      const svgEl = svgRef.current;
-      const behavior = behaviorRef.current;
-      if (!dot || !svgEl || !behavior) return;
-
-      const K = 5;
-      const cw = svgEl.clientWidth;
-      const ch = svgEl.clientHeight;
-      const s = Math.min(cw / vb.w, ch / vb.h); // rendered px per viewBox unit
-      const ox = (cw - vb.w * s) / 2; // letterbox offsets from preserveAspectRatio
-      const oy = (ch - vb.h * s) / 2;
-
-      // Land the venue in the part of the stage the detail panel doesn't cover:
-      // left of the side panel on desktop, above the bottom sheet on mobile.
-      const isMobile = window.innerWidth <= 760;
-      const targetX = isMobile ? cw / 2 : Math.max(cw / 2 - 195, cw * 0.25);
-      const targetY = isMobile ? ch * 0.35 : ch / 2;
-      const vtx = vb.x + (targetX - ox) / s;
-      const vty = vb.y + (targetY - oy) / s;
-      const target = zoomIdentity
-        .translate(vtx - K * dot.point[0], vty - K * dot.point[1])
-        .scale(K);
-
-      const sel = select(svgEl);
-      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        sel.call(behavior.transform, target);
-      } else {
-        sel.transition().duration(850).call(behavior.transform, target);
-      }
-    },
-    [vb],
-  );
-
+  // With a panel open, the free stage is narrower than the country: let the
+  // map shrink below 1× and slide left of the panel instead of hiding under it.
   useEffect(() => {
-    if (flyTo) flyToVenue(flyTo.venueId);
-  }, [flyTo, flyToVenue]);
+    const behavior = behaviorRef.current;
+    if (!behavior) return;
+    if (panelOpen) {
+      behavior.scaleExtent([MIN_K_PANEL, MAX_K]).translateExtent([
+        [extent[0][0] - vb.w, extent[0][1] - vb.h],
+        [extent[1][0] + vb.w, extent[1][1] + vb.h],
+      ]);
+    } else {
+      behavior.scaleExtent([1, MAX_K]).translateExtent(extent);
+    }
+  }, [panelOpen, extent, vb]);
 
-  const resetView = () => {
+  /** Animate to a transform. Duration scales with how far the view moves, so
+   *  a hop to the next town is quick and a cross-country jump takes its time. */
+  const moveTo = useCallback((target: ZoomTransform) => {
     const svgEl = svgRef.current;
     const behavior = behaviorRef.current;
     if (!svgEl || !behavior) return;
     const sel = select(svgEl);
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      sel.call(behavior.transform, zoomIdentity);
-    } else {
-      sel.transition().duration(650).call(behavior.transform, zoomIdentity);
+    if (reduceMotion()) {
+      sel.call(behavior.transform, target);
+      return;
     }
-  };
+    const cur = tRef.current;
+    // Distance between view centers in map units, as a fraction of the country.
+    const mx = vb.x + vb.w / 2;
+    const my = vb.y + vb.h / 2;
+    const panDist =
+      Math.hypot((mx - target.x) / target.k - (mx - cur.x) / cur.k, (my - target.y) / target.k - (my - cur.y) / cur.k) /
+      vb.w;
+    const zoomDist = Math.abs(Math.log2(target.k / cur.k));
+    const duration = Math.min(1600, 450 + zoomDist * 140 + panDist * 1400);
+    sel.transition().duration(duration).call(behavior.transform, target);
+  }, [vb]);
+
+  /** Viewport geometry: the box (in svg px) not covered by the side panel,
+   *  mapped back to viewBox units. */
+  const framing = useCallback(() => {
+    const svgEl = svgRef.current;
+    if (!svgEl) return null;
+    const cw = svgEl.clientWidth;
+    const ch = svgEl.clientHeight;
+    const s = Math.min(cw / vb.w, ch / vb.h); // rendered px per viewBox unit
+    const ox = (cw - vb.w * s) / 2; // letterbox offsets from preserveAspectRatio
+    const oy = (ch - vb.h * s) / 2;
+    const isMobile = window.innerWidth <= 760;
+    // Free area: left of the side panel on desktop, above the sheet on mobile.
+    // Measure the panel when it's in the DOM (it commits before this runs);
+    // fall back to its nominal size.
+    const svgRect = svgEl.getBoundingClientRect();
+    const panelRect = panelOpen ? svgEl.parentElement?.querySelector('.detail')?.getBoundingClientRect() : undefined;
+    const free = isMobile
+      ? {
+          x: 0,
+          y: 0,
+          w: cw,
+          h: panelOpen
+            ? Math.max(ch * 0.3, Math.min(ch, (panelRect ? panelRect.top : svgRect.top + ch * 0.6) - svgRect.top))
+            : ch,
+        }
+      : {
+          x: 0,
+          y: 0,
+          w: panelOpen ? Math.max(cw * 0.4, (panelRect ? panelRect.left : svgRect.left + cw - PANEL_W) - svgRect.left) : cw,
+          h: ch,
+        };
+    const toVb = (px: number, py: number): [number, number] => [vb.x + (px - ox) / s, vb.y + (py - oy) / s];
+    return { s, free, toVb };
+  }, [vb, panelOpen]);
+
+  const flyToVenue = useCallback(
+    (venueId: string) => {
+      const dot = venueDots.find((d) => d.venue.id === venueId);
+      const f = framing();
+      if (!dot || !f) return;
+      // Don't zoom back out if the user is already closer than the default.
+      const K = Math.max(5, tRef.current.k);
+      const [vtx, vty] = f.toVb(f.free.x + f.free.w / 2, f.free.y + f.free.h / 2);
+      moveTo(zoomIdentity.translate(vtx - K * dot.point[0], vty - K * dot.point[1]).scale(K));
+    },
+    [framing, moveTo],
+  );
+
+  const fitLegs = useCallback(
+    (legIds: string[]) => {
+      const f = framing();
+      if (!f) return;
+      const pts = legRoutes
+        .filter((r) => legIds.includes(r.leg.id))
+        .flatMap((r) => r.shows)
+        .map((s) => venueDots.find((d) => d.venue.id === s.venueId)?.point)
+        .filter((p): p is [number, number] => !!p);
+      if (pts.length === 0) return;
+      const x0 = Math.min(...pts.map((p) => p[0]));
+      const x1 = Math.max(...pts.map((p) => p[0]));
+      const y0 = Math.min(...pts.map((p) => p[1]));
+      const y1 = Math.max(...pts.map((p) => p[1]));
+      // Free area in viewBox units at k=1, with breathing room around the run.
+      const fw = (f.free.w / f.s) * 0.8;
+      const fh = (f.free.h / f.s) * 0.8;
+      const k = Math.max(MIN_K_PANEL, Math.min(12, fw / Math.max(x1 - x0, 1), fh / Math.max(y1 - y0, 1)));
+      const [vtx, vty] = f.toVb(f.free.x + f.free.w / 2, f.free.y + f.free.h / 2);
+      const cx = (x0 + x1) / 2;
+      const cy = (y0 + y1) / 2;
+      moveTo(zoomIdentity.translate(vtx - k * cx, vty - k * cy).scale(k));
+    },
+    [framing, moveTo],
+  );
+
+  const resetView = useCallback(() => moveTo(zoomIdentity), [moveTo]);
+
+  useEffect(() => {
+    if (!camera) return;
+    if (camera.kind === 'venue') flyToVenue(camera.venueId);
+    else if (camera.kind === 'legs') fitLegs(camera.legIds);
+    else resetView();
+    // Only a new request should move the camera — not a re-created callback.
+  }, [camera]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (t.k < STREETS_INDEX_K || indexRequested.current) return;
