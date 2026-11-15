@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
-import { legById, legRoutes, photoAlt, photosByShow, photoThumb, venueById } from '../lib/derive';
+import { useRef } from 'react';
+import { legById, legRoutes, photoAlt, photosByShow, photoThumb, showById, venueById } from '../lib/derive';
 import { formatDate } from '../lib/format';
+import { usePanelFocus } from '../lib/usePanelFocus';
 import type { Photo, Show } from '../types';
 
 const TYPE_LABELS: Record<Show['type'], string> = {
@@ -31,24 +32,17 @@ export function DetailPanel({
   onOpenPhotos,
 }: DetailPanelProps) {
   const closeRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    closeRef.current?.focus();
-  }, [venueId]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  usePanelFocus(closeRef);
 
   const venue = venueById.get(venueId);
   if (!venue) return null;
 
-  // Every show at this venue, then the full run of the leg it belongs to.
-  const route = legRoutes.find((r) => r.shows.some((s) => s.venueId === venueId));
+  // The run comes from the selected show's leg, not whichever leg first
+  // played this venue.
+  const selectedShow = selectedShowId ? showById.get(selectedShowId) : undefined;
+  const route =
+    legRoutes.find((r) => r.leg.id === selectedShow?.legId) ??
+    legRoutes.find((r) => r.shows.some((s) => s.venueId === venueId));
   const venueShows = route?.shows.filter((s) => s.venueId === venueId) ?? [];
 
   return (

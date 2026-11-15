@@ -18,23 +18,26 @@ const ALL_LEG_IDS = new Set(legs.map((l) => l.id));
 const reducedMotion =
   typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-/** Eases the displayed number toward its target so jumps read as counting. */
+/** Eases the displayed number toward its target so jumps read as counting.
+ *  The animation loop runs only while the number is still moving. */
 function useOdometer(target: number): number {
   const [display, setDisplay] = useState(target);
-  const targetRef = useRef(target);
-  targetRef.current = target;
+  const displayRef = useRef(target);
 
   useEffect(() => {
     if (reducedMotion) return;
-    let raf = requestAnimationFrame(function tick() {
-      setDisplay((prev) => {
-        const diff = targetRef.current - prev;
-        return Math.abs(diff) < 0.6 ? targetRef.current : prev + diff * 0.2;
-      });
-      raf = requestAnimationFrame(tick);
-    });
+    let raf = 0;
+    const tick = () => {
+      const prev = displayRef.current;
+      const diff = target - prev;
+      const next = Math.abs(diff) < 0.6 ? target : prev + diff * 0.2;
+      displayRef.current = next;
+      setDisplay(next);
+      if (next !== target) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [target]);
 
   return reducedMotion ? target : display;
 }
@@ -134,6 +137,23 @@ export function App() {
     setPlaying(false);
     setLightbox({ photos, index });
   };
+
+  // One Escape handler for the whole app, so a press closes only the topmost
+  // layer: photo viewer, then show.
+  // The listener is attached once and reads the latest state through a ref, so
+  // it can't be detached mid-dispatch by a re-render.
+  const escapeRef = useRef<() => void>(() => {});
+  escapeRef.current = () => {
+    if (lightbox) setLightbox(null);
+    else if (selectedShowId) setSelectedShowId(null);
+  };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') escapeRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const odometerMiles = useOdometer(milesAt(timeDays));
 
